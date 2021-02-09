@@ -3,3 +3,6 @@
 *.db
 *.DS_Store
 data/*
+dist/*
+build/*
+*.egg-info
