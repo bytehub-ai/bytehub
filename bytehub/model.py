@@ -180,7 +180,7 @@ class Feature(Base, FeatureStoreMixin):
                 partition_on="partition",
                 ignore_divisions=True,
                 schema=schema,
-                storage_options=storage_options
+                storage_options=storage_options,
             )
         except Exception as e:
             raise RuntimeError(f"Unable to save data to {path}: {str(e)}")
