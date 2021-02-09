@@ -1,0 +1,14 @@
+name: bytehub
+channels:
+  - conda-forge
+dependencies:
+  - python=3.8
+  - pip
+  - dask=2021.1.1
+  - pyarrow=3.0
+  - jupyterlab=3.0
+  - sqlalchemy=1.3
+  - s3fs=0.5
+  - jupyterlab
+  - pytest
+  - black

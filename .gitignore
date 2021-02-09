@@ -1,0 +1,5 @@
+*.py[cod]
+*.ipynb
+*.db
+*.DS_Store
+data/*

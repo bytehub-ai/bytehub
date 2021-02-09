@@ -1,0 +1,4 @@
+pandas>=1.2
+pyarrow>=3.0
+dask>=2021
+SQLAlchemy>=1.3
