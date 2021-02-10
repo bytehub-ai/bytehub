@@ -1,7 +1,7 @@
 # ByteHub Feature Store
 
 [![PyPI Latest Release](https://img.shields.io/pypi/v/bytehub.svg)](https://pypi.org/project/bytehub/)
-[![Issues](https://img.shields.io/github/workflow/status/bytehub-ai/bytehub/Tests)](https://github.com/bytehub-ai/workflow/status/black)
+[![Issues](https://img.shields.io/github/workflow/status/bytehub-ai/bytehub/Tests)](https://github.com/bytehub-ai/bytehub/actions?query=workflow%3ATests)
 [![Issues](https://img.shields.io/github/issues/bytehub-ai/bytehub)](https://github.com/bytehub-ai/bytehub/issues)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
