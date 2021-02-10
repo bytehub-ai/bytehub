@@ -266,43 +266,29 @@ class TestFeatureStore:
         fs.save_dataframe(df1)
         fs.save_dataframe(df2)
 
+        # Pandas tests
+        fs.mode = "pandas"
         result = fs.load_dataframe(["test/resample1", "test/resample2"])
-        result_dask = fs.load_dataframe(
-            ["test/resample1", "test/resample2"], mode="dask"
-        )
-        assert result.equals(pd.concat([df1, df2], join="outer", axis=1).ffill())
-        assert result.equals(result_dask.compute())
+        compare = pd.concat([df1, df2], join="outer", axis=1).ffill()
+        assert result.equals(compare)
         result = fs.load_dataframe(["test/resample1", "test/resample2"], freq="2d")
-        result_dask = fs.load_dataframe(
-            ["test/resample1", "test/resample2"], freq="2d", mode="dask"
-        )
-        assert result.equals(
+        compare = (
             pd.concat([df1, df2], join="outer", axis=1).resample("2d").ffill().ffill()
         )
-        assert result.equals(result_dask.compute())
+        assert result.equals(compare)
         result = fs.load_dataframe(["test/resample1", "test/resample2"], freq="10min")
-        result_dask = fs.load_dataframe(
-            ["test/resample1", "test/resample2"], freq="10min", mode="dask"
-        )
-        assert result.equals(
+        compare = (
             pd.concat([df1, df2], join="outer", axis=1)
             .resample("10min")
             .ffill()
             .ffill()
         )
-        assert result.equals(result_dask.compute())
+        assert result.equals(compare)
         result = fs.load_dataframe(
             ["test/resample1", "test/resample2"],
             freq="10min",
             from_date="2021-01-10",
             to_date="2021-01-12",
-        )
-        result_dask = fs.load_dataframe(
-            ["test/resample1", "test/resample2"],
-            freq="10min",
-            from_date="2021-01-10",
-            to_date="2021-01-12",
-            mode="dask",
         )
         compare = (
             pd.concat([df1, df2], join="outer", axis=1)
@@ -315,7 +301,6 @@ class TestFeatureStore:
             & (compare.index <= pd.Timestamp("2021-01-12"))
         ]
         assert result.equals(compare)
-        assert result.equals(result_dask.compute())
         # Use dataframe to specify which features to load
         result = fs.load_dataframe(
             fs.list_features(regex=r"resample."),
@@ -329,19 +314,67 @@ class TestFeatureStore:
             from_date="2021-01-10",
             to_date="2021-01-12",
         )
-        result_dask = fs.load_dataframe(
-            "test/resample1",
-            from_date="2021-01-10",
-            to_date="2021-01-12",
-            mode="dask",
-        )
         compare = df1[
             (df1.index >= pd.Timestamp("2021-01-10"))
             & (df1.index <= pd.Timestamp("2021-01-12"))
         ]
         assert result.equals(compare)
-        assert result.equals(result_dask.compute())
 
+        # Dask tests
+        fs.mode = "dask"
+        result_dask = fs.load_dataframe(
+            ["test/resample1", "test/resample2"],
+        )
+        compare = pd.concat([df1, df2], join="outer", axis=1).ffill()
+        assert result_dask.compute().equals(compare)
+        result_dask = fs.load_dataframe(
+            ["test/resample1", "test/resample2"],
+            freq="2d",
+        )
+        compare = (
+            pd.concat([df1, df2], join="outer", axis=1).resample("2d").ffill().ffill()
+        )
+        assert result_dask.compute().equals(compare)
+        result_dask = fs.load_dataframe(
+            ["test/resample1", "test/resample2"],
+            freq="10min",
+        )
+        compare = (
+            pd.concat([df1, df2], join="outer", axis=1)
+            .resample("10min")
+            .ffill()
+            .ffill()
+        )
+        assert result_dask.compute().equals(compare)
+        result_dask = fs.load_dataframe(
+            ["test/resample1", "test/resample2"],
+            freq="10min",
+            from_date="2021-01-10",
+            to_date="2021-01-12",
+        )
+        compare = (
+            pd.concat([df1, df2], join="outer", axis=1)
+            .resample("10min")
+            .ffill()
+            .ffill()
+        )
+        compare = compare[
+            (compare.index >= pd.Timestamp("2021-01-10"))
+            & (compare.index <= pd.Timestamp("2021-01-12"))
+        ]
+        assert result_dask.compute().equals(compare)
+        result_dask = fs.load_dataframe(
+            "test/resample1",
+            from_date="2021-01-10",
+            to_date="2021-01-12",
+        )
+        compare = df1[
+            (df1.index >= pd.Timestamp("2021-01-10"))
+            & (df1.index <= pd.Timestamp("2021-01-12"))
+        ]
+        assert result_dask.compute().equals(compare)
+
+        fs.mode = "pandas"
         fs.delete_feature("test/resample1")
         fs.delete_feature("test/resample2")
 

@@ -9,9 +9,21 @@ from . import model
 
 
 class FeatureStore:
-    def __init__(self, connection_string="sqlite:///bytehub.db"):
-        """Create a Feature Store"""
+    """ByteHub Feature Store object"""
+
+    def __init__(self, connection_string="sqlite:///bytehub.db", backend="pandas"):
+        """Create a Feature Store, or connect to an existing one
+
+        Args:
+            connection_string, str: SQLAlchemy connection string for database
+                containing feature store metadata - defaults to local sqlite file
+            backend, str: eith 'pandas' (default) or 'dask', specifying the type
+                of dataframes returned by load_dataframe
+        """
         self.engine, self.session_maker = conn.connect(connection_string)
+        if backend.lower() not in ["pandas", "dask"]:
+            raise ValueError("Backend must be either pandas or dask")
+        self.mode = backend.lower()
         model.Base.metadata.create_all(self.engine)
 
     @classmethod
@@ -271,7 +283,6 @@ class FeatureStore:
         to_date=None,
         freq=None,
         time_travel=None,
-        mode="pandas",
     ):
         """Load a DataFrame of feature values from the feature store.
 
@@ -281,12 +292,10 @@ class FeatureStore:
             to_date, datetime, optional: end date to load timeseries to, defaults to everything
             freq, str, optional: frequency interval at which feature values should be sampled
             time_travel, optional:
-            mode, str, optional: either 'pandas' (default) or 'dask' to specify the type of DataFrame to return
 
         Returns:
-            pd.DataFrame or dask.DataFrame depending on mode
+            pd.DataFrame or dask.DataFrame depending on which backend was specified in the feature store
         """
-        assert mode in ["dask", "pandas"], 'Mode must be either "dask" or "pandas"'
         dfs = []
         # Load each requested feature
         for f in self._unpack_list(features):
@@ -305,12 +314,12 @@ class FeatureStore:
                     to_date=to_date,
                     freq=freq,
                     time_travel=time_travel,
-                    mode=mode,
+                    mode=self.mode,
                 )
                 dfs.append(df.rename(columns={"value": f"{namespace}/{name}"}))
-        if mode == "pandas":
+        if self.mode == "pandas":
             return pd.concat(dfs, join="outer", axis=1).ffill()
-        elif mode == "dask":
+        elif self.mode == "dask":
             dfs = functools.reduce(
                 lambda left, right: dd.merge(
                     left, right, left_index=True, right_index=True, how="outer"
@@ -319,7 +328,7 @@ class FeatureStore:
             )
             return dfs.ffill()
         else:
-            raise NotImplementedError(f"{mode} has not been implemented")
+            raise NotImplementedError(f"{self.mode} has not been implemented")
 
     def save_dataframe(self, df, name=None, namespace=None):
         """Save a DataFrame of feature values to the feature store.
