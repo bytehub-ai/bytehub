@@ -99,6 +99,13 @@ class Feature(Base, FeatureStoreMixin):
     namespace_object = relationship("Namespace", backref="features")
 
     partition = Column(partitions, default="date", nullable=False)
+    serialized = Column(Boolean, default=False, nullable=False)
+
+    @validates('serialized')
+    def validate_serialized(self, key, value):
+        if self.serialized is not None:
+            raise ValueError("Cannot change serialized setting on existing feature")
+        return value
 
     def apply_partition(self, dt, offset=0):
         if isinstance(dt, dd.core.Series):
@@ -156,6 +163,9 @@ class Feature(Base, FeatureStoreMixin):
         extraneous = set(ddf.columns) - set(["created_time", "value", "partition"])
         if len(extraneous) > 0:
             raise ValueError(f"DataFrame contains extraneous columns: {extraneous}")
+        # Serialize to JSON if required
+        if self.serialized:
+            ddf = ddf.map_partitions(lambda df: df.assign(value=df.value.apply(pd.io.json.dumps)))
 
         # Write to output location
         url = self.namespace_object.url
@@ -217,6 +227,9 @@ class Feature(Base, FeatureStoreMixin):
             ddf = ddf.reset_index()
             ddf = ddf[ddf.created_time <= ddf.time + pd.Timedelta(time_travel)]
             ddf = ddf.set_index("time")
+        # De-serialize from JSON if required
+        if self.serialized:
+            ddf = ddf.map_partitions(lambda df: df.assign(value=df.value.apply(pd.io.json.loads)), meta={'value': 'object', 'created_time': 'datetime64[ns]', 'partition': 'uint16'})
         if not from_date:
             from_date = ddf.index.min().compute()  # First value in data
         if not to_date:

@@ -245,10 +245,13 @@ class FeatureStore:
             namespace, str, optional: namespace which should hold this feature
             description, str, optional: description for this namespace
             partition, str, optional: partitioning of stored timeseries (default: 'date')
+            serialized, bool, optional: if True, converts values to JSON strings before saving,
+                which can help in situations where the format/schema of the data changes 
+                over time
             meta, dict, optional: key/value pairs of metadata
         """
         self.__class__._validate_kwargs(
-            kwargs, valid=["description", "meta", "partition"], mandatory=[]
+            kwargs, valid=["description", "meta", "partition", "serialized"], mandatory=[]
         )
         self._create(model.Feature, namespace=namespace, name=name, payload=kwargs)
 

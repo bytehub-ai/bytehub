@@ -378,6 +378,36 @@ class TestFeatureStore:
         fs.delete_feature("test/resample1")
         fs.delete_feature("test/resample2")
 
+    def test_serialized_features(self):
+        print('Testing JSON serialized features')
+        fs = self.fs
+
+        fs.create_feature("test/non-serialized")
+        fs.create_feature("test/serialized", serialized=True)
+
+        dts = pd.date_range('2020-01-01', '2021-01-01')
+        df = pd.DataFrame(
+            {
+                'time': dts,
+                # Values with changing schema
+                'value': [idx if idx < 150 else {'x': idx} for idx, x in enumerate(dts)]
+            }
+        ).set_index('time')
+
+        # Raise exception if trying to change serialzation on existing feature
+        with pytest.raises(Exception):
+            fs.update_feature("test/non-serialized", serialized=True)
+        # Raise exception if schema changes on non-serialized feature
+        with pytest.raises(Exception):
+            fs.save_dataframe(df, "test/non-serialized")
+        # This should work
+        fs.save_dataframe(df, "test/serialized")
+        result = fs.load_dataframe("test/serialized")
+        assert result.equals(df.rename(columns={'value': 'test/serialized'}))
+
+        fs.delete_feature("test/non-serialized")
+        fs.delete_feature("test/serialized")
+
     def test_empty_features(self):
         print("Testing empty feature datasets...")
         fs = self.fs
