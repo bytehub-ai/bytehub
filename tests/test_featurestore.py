@@ -194,6 +194,30 @@ class TestFeatureStore:
         assert fs.list_features(namespace="test2").empty
         assert fs.list_features(namespace="test").empty
 
+    def test_clone_features(self):
+        print("Testing cloned features")
+        fs = self.fs
+
+        dts = pd.date_range("2021-01-01", "2021-03-01")
+        df1 = pd.DataFrame(
+            {"time": dts, "value": np.random.randint(0, 100, size=len(dts))}
+        ).set_index("time")
+        fs.create_feature(
+            "test/old-feature", description="Will be cloned", serialized=True
+        )
+        fs.save_dataframe(df1, "test/old-feature")
+        fs.clone_feature("test/cloned-feature", from_name="test/old-feature")
+        feature = fs.list_features(name="test/cloned-feature").iloc[0]
+        # Check that metadata was copied
+        assert feature.description == "Will be cloned"
+        assert feature.serialized == True
+        # Check that data was copied
+        result = fs.load_dataframe("test/cloned-feature")
+        print(result.head())
+        print(df1.rename(columns={"value": "test/cloned-feature"}))
+        print(len(df1), len(result))
+        assert result.equals(df1.rename(columns={"value": "test/cloned-feature"}))
+
     def test_dataframes(self):
         print("Testing data load/save...")
         fs = self.fs
@@ -379,20 +403,22 @@ class TestFeatureStore:
         fs.delete_feature("test/resample2")
 
     def test_serialized_features(self):
-        print('Testing JSON serialized features')
+        print("Testing JSON serialized features")
         fs = self.fs
 
         fs.create_feature("test/non-serialized")
         fs.create_feature("test/serialized", serialized=True)
 
-        dts = pd.date_range('2020-01-01', '2021-01-01')
+        dts = pd.date_range("2020-01-01", "2021-01-01")
         df = pd.DataFrame(
             {
-                'time': dts,
+                "time": dts,
                 # Values with changing schema
-                'value': [idx if idx < 150 else {'x': idx} for idx, x in enumerate(dts)]
+                "value": [
+                    idx if idx < 150 else {"x": idx} for idx, x in enumerate(dts)
+                ],
             }
-        ).set_index('time')
+        ).set_index("time")
 
         # Raise exception if trying to change serialzation on existing feature
         with pytest.raises(Exception):
@@ -403,7 +429,7 @@ class TestFeatureStore:
         # This should work
         fs.save_dataframe(df, "test/serialized")
         result = fs.load_dataframe("test/serialized")
-        assert result.equals(df.rename(columns={'value': 'test/serialized'}))
+        assert result.equals(df.rename(columns={"value": "test/serialized"}))
 
         fs.delete_feature("test/non-serialized")
         fs.delete_feature("test/serialized")

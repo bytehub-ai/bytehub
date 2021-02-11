@@ -246,14 +246,53 @@ class FeatureStore:
             description, str, optional: description for this namespace
             partition, str, optional: partitioning of stored timeseries (default: 'date')
             serialized, bool, optional: if True, converts values to JSON strings before saving,
-                which can help in situations where the format/schema of the data changes 
+                which can help in situations where the format/schema of the data changes
                 over time
             meta, dict, optional: key/value pairs of metadata
         """
         self.__class__._validate_kwargs(
-            kwargs, valid=["description", "meta", "partition", "serialized"], mandatory=[]
+            kwargs,
+            valid=["description", "meta", "partition", "serialized"],
+            mandatory=[],
         )
         self._create(model.Feature, namespace=namespace, name=name, payload=kwargs)
+
+    def clone_feature(self, name, namespace=None, **kwargs):
+        """Create a new feature by cloning an existing one.
+
+        Args:
+            name, str: name of the feature
+            namespace, str, optional: namespace which should hold this feature
+            from_name, str: the name of the existing feature to copy from
+            from_namespace, str, optional: namespace of the existing feature
+        """
+        self.__class__._validate_kwargs(
+            kwargs,
+            valid=["from_namespace", "from_name"],
+            mandatory=["from_name"],
+        )
+        from_namespace, from_name = FeatureStore._split_name(
+            kwargs.get("from_namespace"), kwargs.get("from_name")
+        )
+        to_namespace, to_name = FeatureStore._split_name(namespace, name)
+        if not self._exists(model.Namespace, namespace=from_namespace):
+            raise ValueError(f"{from_namespace} namespace does not exist")
+        if not self._exists(model.Namespace, namespace=to_namespace):
+            raise ValueError(f"{to_namespace} namespace does not exist")
+        with conn.session_scope(self.session_maker) as session:
+            # Get the existing feature
+            r = session.query(model.Feature)
+            r = r.filter_by(namespace=from_namespace, name=from_name)
+            feature = r.one_or_none()
+            if not feature:
+                raise RuntimeError(
+                    f"No existing Feature named {from_name} in {from_namespace}"
+                )
+            # Create the new feature
+            new_feature = model.Feature.clone_from(feature, to_namespace, to_name)
+            session.add(new_feature)
+            # Copy data to new feature, if this raises exception will rollback
+            new_feature.import_data_from(feature)
 
     def delete_feature(self, name, namespace=None):
         """Delete a feature from the feature store.
