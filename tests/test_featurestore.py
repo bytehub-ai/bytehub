@@ -7,6 +7,7 @@ import random
 import string
 import posixpath
 import pytest
+import shutil
 
 
 def random_string(n):
@@ -32,7 +33,7 @@ class TestFeatureStore:
         except Exception:
             pass
         try:
-            os.rmdir(self.location)
+            shutil.rmtree(posixpath.join(self.location, self.file_name))
         except Exception:
             pass
 
@@ -194,6 +195,84 @@ class TestFeatureStore:
         assert fs.list_features(namespace="test2").empty
         assert fs.list_features(namespace="test").empty
 
+    def test_data_deletion(self):
+        print("Testing data deletion...")
+        fs = self.fs
+
+        dts = pd.date_range("2021-01-01", "2021-03-01")
+        df1 = pd.DataFrame(
+            {"time": dts, "value": np.random.randint(0, 100, size=len(dts))}
+        ).set_index("time")
+        fs.create_feature(
+            "test/feature-to-delete",
+        )
+        fs.save_dataframe(df1, "test/feature-to-delete")
+        # Check data exists
+        assert os.path.isdir(
+            posixpath.join(
+                self.location, self.file_name, "feature", "feature-to-delete"
+            )
+        )
+        fs.delete_feature("test/feature-to-delete", delete_data=True)
+        # Data should now have gone
+        assert not os.path.isdir(
+            posixpath.join(
+                self.location, self.file_name, "feature", "feature-to-delete"
+            )
+        )
+
+        fs.create_feature(
+            "test/feature-to-delete",
+        )
+        fs.save_dataframe(df1, "test/feature-to-delete")
+        # Check data exists
+        assert os.path.isdir(
+            posixpath.join(
+                self.location, self.file_name, "feature", "feature-to-delete"
+            )
+        )
+        fs.delete_feature("test/feature-to-delete")
+        # Check data still exists
+        assert os.path.isdir(
+            posixpath.join(
+                self.location, self.file_name, "feature", "feature-to-delete"
+            )
+        )
+        # Call clean_namespace to get rid of data
+        fs.clean_namespace("test")
+        assert not os.path.isdir(
+            posixpath.join(
+                self.location, self.file_name, "feature", "feature-to-delete"
+            )
+        )
+
+    def test_clone_features(self):
+        print("Testing cloned features")
+        fs = self.fs
+
+        dts = pd.date_range("2021-01-01", "2021-03-01")
+        df1 = pd.DataFrame(
+            {"time": dts, "value": np.random.randint(0, 100, size=len(dts))}
+        ).set_index("time")
+        fs.create_feature(
+            "test/old-feature", description="Will be cloned", serialized=True
+        )
+        fs.save_dataframe(df1, "test/old-feature")
+        fs.clone_feature("test/cloned-feature", from_name="test/old-feature")
+        feature = fs.list_features(name="test/cloned-feature").iloc[0]
+        # Check that metadata was copied
+        assert feature.description == "Will be cloned"
+        assert feature.serialized == True
+        # Check that data was copied
+        result = fs.load_dataframe("test/cloned-feature")
+        print(result.head())
+        print(df1.rename(columns={"value": "test/cloned-feature"}))
+        print(len(df1), len(result))
+        assert result.equals(df1.rename(columns={"value": "test/cloned-feature"}))
+
+        fs.delete_feature("test/old-feature")
+        fs.delete_feature("test/cloned-feature")
+
     def test_dataframes(self):
         print("Testing data load/save...")
         fs = self.fs
@@ -266,43 +345,29 @@ class TestFeatureStore:
         fs.save_dataframe(df1)
         fs.save_dataframe(df2)
 
+        # Pandas tests
+        fs.mode = "pandas"
         result = fs.load_dataframe(["test/resample1", "test/resample2"])
-        result_dask = fs.load_dataframe(
-            ["test/resample1", "test/resample2"], mode="dask"
-        )
-        assert result.equals(pd.concat([df1, df2], join="outer", axis=1).ffill())
-        assert result.equals(result_dask.compute())
+        compare = pd.concat([df1, df2], join="outer", axis=1).ffill()
+        assert result.equals(compare)
         result = fs.load_dataframe(["test/resample1", "test/resample2"], freq="2d")
-        result_dask = fs.load_dataframe(
-            ["test/resample1", "test/resample2"], freq="2d", mode="dask"
-        )
-        assert result.equals(
+        compare = (
             pd.concat([df1, df2], join="outer", axis=1).resample("2d").ffill().ffill()
         )
-        assert result.equals(result_dask.compute())
+        assert result.equals(compare)
         result = fs.load_dataframe(["test/resample1", "test/resample2"], freq="10min")
-        result_dask = fs.load_dataframe(
-            ["test/resample1", "test/resample2"], freq="10min", mode="dask"
-        )
-        assert result.equals(
+        compare = (
             pd.concat([df1, df2], join="outer", axis=1)
             .resample("10min")
             .ffill()
             .ffill()
         )
-        assert result.equals(result_dask.compute())
+        assert result.equals(compare)
         result = fs.load_dataframe(
             ["test/resample1", "test/resample2"],
             freq="10min",
             from_date="2021-01-10",
             to_date="2021-01-12",
-        )
-        result_dask = fs.load_dataframe(
-            ["test/resample1", "test/resample2"],
-            freq="10min",
-            from_date="2021-01-10",
-            to_date="2021-01-12",
-            mode="dask",
         )
         compare = (
             pd.concat([df1, df2], join="outer", axis=1)
@@ -315,7 +380,6 @@ class TestFeatureStore:
             & (compare.index <= pd.Timestamp("2021-01-12"))
         ]
         assert result.equals(compare)
-        assert result.equals(result_dask.compute())
         # Use dataframe to specify which features to load
         result = fs.load_dataframe(
             fs.list_features(regex=r"resample."),
@@ -329,21 +393,101 @@ class TestFeatureStore:
             from_date="2021-01-10",
             to_date="2021-01-12",
         )
-        result_dask = fs.load_dataframe(
-            "test/resample1",
-            from_date="2021-01-10",
-            to_date="2021-01-12",
-            mode="dask",
-        )
         compare = df1[
             (df1.index >= pd.Timestamp("2021-01-10"))
             & (df1.index <= pd.Timestamp("2021-01-12"))
         ]
         assert result.equals(compare)
-        assert result.equals(result_dask.compute())
 
+        # Dask tests
+        fs.mode = "dask"
+        result_dask = fs.load_dataframe(
+            ["test/resample1", "test/resample2"],
+        )
+        compare = pd.concat([df1, df2], join="outer", axis=1).ffill()
+        assert result_dask.compute().equals(compare)
+        result_dask = fs.load_dataframe(
+            ["test/resample1", "test/resample2"],
+            freq="2d",
+        )
+        compare = (
+            pd.concat([df1, df2], join="outer", axis=1).resample("2d").ffill().ffill()
+        )
+        assert result_dask.compute().equals(compare)
+        result_dask = fs.load_dataframe(
+            ["test/resample1", "test/resample2"],
+            freq="10min",
+        )
+        compare = (
+            pd.concat([df1, df2], join="outer", axis=1)
+            .resample("10min")
+            .ffill()
+            .ffill()
+        )
+        assert result_dask.compute().equals(compare)
+        result_dask = fs.load_dataframe(
+            ["test/resample1", "test/resample2"],
+            freq="10min",
+            from_date="2021-01-10",
+            to_date="2021-01-12",
+        )
+        compare = (
+            pd.concat([df1, df2], join="outer", axis=1)
+            .resample("10min")
+            .ffill()
+            .ffill()
+        )
+        compare = compare[
+            (compare.index >= pd.Timestamp("2021-01-10"))
+            & (compare.index <= pd.Timestamp("2021-01-12"))
+        ]
+        assert result_dask.compute().equals(compare)
+        result_dask = fs.load_dataframe(
+            "test/resample1",
+            from_date="2021-01-10",
+            to_date="2021-01-12",
+        )
+        compare = df1[
+            (df1.index >= pd.Timestamp("2021-01-10"))
+            & (df1.index <= pd.Timestamp("2021-01-12"))
+        ]
+        assert result_dask.compute().equals(compare)
+
+        fs.mode = "pandas"
         fs.delete_feature("test/resample1")
         fs.delete_feature("test/resample2")
+
+    def test_serialized_features(self):
+        print("Testing JSON serialized features")
+        fs = self.fs
+
+        fs.create_feature("test/non-serialized")
+        fs.create_feature("test/serialized", serialized=True)
+
+        dts = pd.date_range("2020-01-01", "2021-01-01")
+        df = pd.DataFrame(
+            {
+                "time": dts,
+                # Values with changing schema
+                "value": [
+                    idx if idx < 150 else {"x": idx} for idx, x in enumerate(dts)
+                ],
+            }
+        ).set_index("time")
+
+        # Raise exception if trying to change serialzation on existing feature
+        with pytest.raises(Exception):
+            fs.update_feature("test/non-serialized", serialized=True)
+        # Raise exception if schema changes on non-serialized feature
+        with pytest.raises(Exception):
+            fs.save_dataframe(df, "test/non-serialized")
+        # This should work
+        fs.save_dataframe(df, "test/serialized")
+        result = fs.load_dataframe("test/serialized")
+        assert result.equals(df.rename(columns={"value": "test/serialized"}))
+
+        fs.delete_feature("test/non-serialized")
+        fs.delete_feature("test/serialized")
 
     def test_empty_features(self):
         print("Testing empty feature datasets...")

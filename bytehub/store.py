@@ -9,9 +9,21 @@ from . import model
 
 
 class FeatureStore:
-    def __init__(self, connection_string="sqlite:///bytehub.db"):
-        """Create a Feature Store"""
+    """ByteHub Feature Store object"""
+
+    def __init__(self, connection_string="sqlite:///bytehub.db", backend="pandas"):
+        """Create a Feature Store, or connect to an existing one
+
+        Args:
+            connection_string, str: SQLAlchemy connection string for database
+                containing feature store metadata - defaults to local sqlite file
+            backend, str: eith 'pandas' (default) or 'dask', specifying the type
+                of dataframes returned by load_dataframe
+        """
         self.engine, self.session_maker = conn.connect(connection_string)
+        if backend.lower() not in ["pandas", "dask"]:
+            raise ValueError("Backend must be either pandas or dask")
+        self.mode = backend.lower()
         model.Base.metadata.create_all(self.engine)
 
     @classmethod
@@ -90,7 +102,7 @@ class FeatureStore:
             df = df[[*column_order, *df.columns.difference(column_order)]]
             return df
 
-    def _delete(self, cls, namespace=None, name=None):
+    def _delete(self, cls, namespace=None, name=None, delete_data=False):
         namespace, name = FeatureStore._split_name(namespace, name)
         with conn.session_scope(self.session_maker) as session:
             r = session.query(cls)
@@ -103,6 +115,8 @@ class FeatureStore:
                 raise RuntimeError(
                     f"No existing {cls.__name__} named {name} in {namespace}"
                 )
+            if hasattr(obj, "delete_data") and delete_data:
+                obj.delete_data()
             session.delete(obj)
 
     def _update(self, cls, namespace=None, name=None, payload={}):
@@ -203,6 +217,21 @@ class FeatureStore:
             )
         self._delete(model.Namespace, name=name)
 
+    def clean_namespace(self, name):
+        """Removes any data that is not associated with features in the namespace.
+        Run this to free up disk space after deleting features
+
+        Args:
+            name:, str: namespace to clean
+        """
+        with conn.session_scope(self.session_maker) as session:
+            r = session.query(model.Namespace)
+            r = r.filter_by(name=name)
+            namespace = r.one_or_none()
+            if not namespace:
+                raise RuntimeError(f"No existing Namespace named {name}")
+            namespace.clean()
+
     def list_features(self, **kwargs):
         """List features in the feature store.
 
@@ -233,21 +262,66 @@ class FeatureStore:
             namespace, str, optional: namespace which should hold this feature
             description, str, optional: description for this namespace
             partition, str, optional: partitioning of stored timeseries (default: 'date')
+            serialized, bool, optional: if True, converts values to JSON strings before saving,
+                which can help in situations where the format/schema of the data changes
+                over time
             meta, dict, optional: key/value pairs of metadata
         """
         self.__class__._validate_kwargs(
-            kwargs, valid=["description", "meta", "partition"], mandatory=[]
+            kwargs,
+            valid=["description", "meta", "partition", "serialized"],
+            mandatory=[],
         )
         self._create(model.Feature, namespace=namespace, name=name, payload=kwargs)
 
-    def delete_feature(self, name, namespace=None):
+    def clone_feature(self, name, namespace=None, **kwargs):
+        """Create a new feature by cloning an existing one.
+
+        Args:
+            name, str: name of the feature
+            namespace, str, optional: namespace which should hold this feature
+            from_name, str: the name of the existing feature to copy from
+            from_namespace, str, optional: namespace of the existing feature
+        """
+        self.__class__._validate_kwargs(
+            kwargs,
+            valid=["from_namespace", "from_name"],
+            mandatory=["from_name"],
+        )
+        from_namespace, from_name = FeatureStore._split_name(
+            kwargs.get("from_namespace"), kwargs.get("from_name")
+        )
+        to_namespace, to_name = FeatureStore._split_name(namespace, name)
+        if not self._exists(model.Namespace, namespace=from_namespace):
+            raise ValueError(f"{from_namespace} namespace does not exist")
+        if not self._exists(model.Namespace, namespace=to_namespace):
+            raise ValueError(f"{to_namespace} namespace does not exist")
+        with conn.session_scope(self.session_maker) as session:
+            # Get the existing feature
+            r = session.query(model.Feature)
+            r = r.filter_by(namespace=from_namespace, name=from_name)
+            feature = r.one_or_none()
+            if not feature:
+                raise RuntimeError(
+                    f"No existing Feature named {from_name} in {from_namespace}"
+                )
+            # Create the new feature
+            new_feature = model.Feature.clone_from(feature, to_namespace, to_name)
+            session.add(new_feature)
+            # Copy data to new feature, if this raises exception will rollback
+            new_feature.import_data_from(feature)
+
+    def delete_feature(self, name, namespace=None, delete_data=False):
         """Delete a feature from the feature store.
 
         Args:
             name, str: name of feature to delete.
             namespace, str: namespace, if not included in feature name.
+            delete_data, boolean, optional: if set to true will delete underlying stored data
+                for this feature, otherwise default behaviour is to delete the feature store
+                metadata but leave the stored timeseries values intact
         """
-        self._delete(model.Feature, namespace, name)
+        self._delete(model.Feature, namespace, name, delete_data=delete_data)
 
     def update_feature(self, name, namespace=None, **kwargs):
         """Update a namespace in the feature store.
@@ -271,7 +345,6 @@ class FeatureStore:
         to_date=None,
         freq=None,
         time_travel=None,
-        mode="pandas",
     ):
         """Load a DataFrame of feature values from the feature store.
 
@@ -281,12 +354,10 @@ class FeatureStore:
             to_date, datetime, optional: end date to load timeseries to, defaults to everything
             freq, str, optional: frequency interval at which feature values should be sampled
             time_travel, optional:
-            mode, str, optional: either 'pandas' (default) or 'dask' to specify the type of DataFrame to return
 
         Returns:
-            pd.DataFrame or dask.DataFrame depending on mode
+            pd.DataFrame or dask.DataFrame depending on which backend was specified in the feature store
         """
-        assert mode in ["dask", "pandas"], 'Mode must be either "dask" or "pandas"'
         dfs = []
         # Load each requested feature
         for f in self._unpack_list(features):
@@ -305,12 +376,12 @@ class FeatureStore:
                     to_date=to_date,
                     freq=freq,
                     time_travel=time_travel,
-                    mode=mode,
+                    mode=self.mode,
                 )
                 dfs.append(df.rename(columns={"value": f"{namespace}/{name}"}))
-        if mode == "pandas":
+        if self.mode == "pandas":
             return pd.concat(dfs, join="outer", axis=1).ffill()
-        elif mode == "dask":
+        elif self.mode == "dask":
             dfs = functools.reduce(
                 lambda left, right: dd.merge(
                     left, right, left_index=True, right_index=True, how="outer"
@@ -319,7 +390,7 @@ class FeatureStore:
             )
             return dfs.ffill()
         else:
-            raise NotImplementedError(f"{mode} has not been implemented")
+            raise NotImplementedError(f"{self.mode} has not been implemented")
 
     def save_dataframe(self, df, name=None, namespace=None):
         """Save a DataFrame of feature values to the feature store.

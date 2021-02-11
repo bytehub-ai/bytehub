@@ -12,6 +12,7 @@ import pyarrow as pa
 import re
 import copy
 import posixpath
+import fsspec
 from . import utils
 
 
@@ -91,6 +92,19 @@ class Namespace(Base, FeatureStoreMixin):
     def namespace(cls):
         return cls.name
 
+    def clean(self):
+        # Check for unused data and remove it
+        fs, fs_token, paths = fsspec.get_fs_token_paths(
+            self.url, storage_options=self.storage_options
+        )
+        feature_paths = fs.ls(posixpath.join(paths[0], "feature"))
+        active_feature_names = [f.name for f in self.features]
+        feature_data = [f.split("/")[-1] for f in feature_paths]
+        for feature in feature_data:
+            if feature not in active_feature_names:
+                # Redundant data... delete it
+                fs.rm(posixpath.join(paths[0], "feature", feature), recursive=True)
+
 
 class Feature(Base, FeatureStoreMixin):
     __tablename__ = "feature"
@@ -99,6 +113,27 @@ class Feature(Base, FeatureStoreMixin):
     namespace_object = relationship("Namespace", backref="features")
 
     partition = Column(partitions, default="date", nullable=False)
+    serialized = Column(Boolean, default=False, nullable=False)
+
+    @validates("serialized")
+    def validate_serialized(self, key, value):
+        if self.serialized is not None:
+            raise ValueError("Cannot change serialized setting on existing feature")
+        return value
+
+    @classmethod
+    def clone_from(cls, other, namespace, name):
+        if not isinstance(other, cls):
+            raise ValueError(f"Must clone from another {cls.__name__}")
+        clone = cls()
+        # Build new Feature with same settings as old
+        clone.namespace = namespace
+        clone.name = name
+        payload = other.as_dict()
+        payload.pop("namespace")
+        payload.pop("name")
+        clone.update_from_dict(payload)
+        return clone
 
     def apply_partition(self, dt, offset=0):
         if isinstance(dt, dd.core.Series):
@@ -156,6 +191,11 @@ class Feature(Base, FeatureStoreMixin):
         extraneous = set(ddf.columns) - set(["created_time", "value", "partition"])
         if len(extraneous) > 0:
             raise ValueError(f"DataFrame contains extraneous columns: {extraneous}")
+        # Serialize to JSON if required
+        if self.serialized:
+            ddf = ddf.map_partitions(
+                lambda df: df.assign(value=df.value.apply(pd.io.json.dumps))
+            )
 
         # Write to output location
         url = self.namespace_object.url
@@ -217,6 +257,16 @@ class Feature(Base, FeatureStoreMixin):
             ddf = ddf.reset_index()
             ddf = ddf[ddf.created_time <= ddf.time + pd.Timedelta(time_travel)]
             ddf = ddf.set_index("time")
+        # De-serialize from JSON if required
+        if self.serialized:
+            ddf = ddf.map_partitions(
+                lambda df: df.assign(value=df.value.apply(pd.io.json.loads)),
+                meta={
+                    "value": "object",
+                    "created_time": "datetime64[ns]",
+                    "partition": "uint16",
+                },
+            )
         if not from_date:
             from_date = ddf.index.min().compute()  # First value in data
         if not to_date:
@@ -294,3 +344,53 @@ class Feature(Base, FeatureStoreMixin):
             return None
         else:
             return result["value"].iloc[0]
+
+    def delete_data(self):
+        # Deletes all of the data on this feature
+        fs, fs_token, paths = fsspec.get_fs_token_paths(
+            self.namespace_object.url,
+            storage_options=self.namespace_object.storage_options,
+        )
+        feature_path = posixpath.join(paths[0], "feature", self.name)
+        try:
+            fs.rm(feature_path, recursive=True)
+        except FileNotFoundError:
+            pass
+
+    def import_data_from(self, other):
+        # Copy data over from another feature
+        if not isinstance(other, self.__class__):
+            raise ValueError(f"Must clone from another {cls.__name__}")
+        # Get location of other feature to copy from
+        url = other.namespace_object.url
+        storage_options = other.namespace_object.storage_options
+        # Read the data
+        path = posixpath.join(url, "feature", other.name)
+        try:
+            ddf = dd.read_parquet(
+                path, engine="pyarrow", storage_options=storage_options
+            )
+            # Repartition to optimise files on new dataset
+            ddf = ddf.repartition(partition_size="100MB")
+        except Exception as e:
+            # No data available
+            return
+        # Get location of this feature to copy to
+        url = self.namespace_object.url
+        storage_options = self.namespace_object.storage_options
+        # Read the data
+        path = posixpath.join(url, "feature", self.name)
+        # Copy data to new location
+        try:
+            ddf.to_parquet(
+                path,
+                engine="pyarrow",
+                compression="snappy",
+                write_index=True,
+                append=True,
+                partition_on="partition",
+                ignore_divisions=True,
+                storage_options=storage_options,
+            )
+        except Exception as e:
+            raise RuntimeError(f"Unable to save data to {path}: {str(e)}")
