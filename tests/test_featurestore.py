@@ -7,6 +7,7 @@ import random
 import string
 import posixpath
 import pytest
+import shutil
 
 
 def random_string(n):
@@ -32,7 +33,7 @@ class TestFeatureStore:
         except Exception:
             pass
         try:
-            os.rmdir(self.location)
+            shutil.rmtree(posixpath.join(self.location, self.file_name))
         except Exception:
             pass
 
@@ -193,6 +194,37 @@ class TestFeatureStore:
 
         assert fs.list_features(namespace="test2").empty
         assert fs.list_features(namespace="test").empty
+    
+    def test_data_deletion(self):
+        print("Testing data deletion...")
+        fs = self.fs
+
+        dts = pd.date_range("2021-01-01", "2021-03-01")
+        df1 = pd.DataFrame(
+            {"time": dts, "value": np.random.randint(0, 100, size=len(dts))}
+        ).set_index("time")
+        fs.create_feature(
+            "test/feature-to-delete",
+        )
+        fs.save_dataframe(df1, "test/feature-to-delete")
+        # Check data exists
+        assert os.path.isdir(posixpath.join(self.location, self.file_name, "feature", "feature-to-delete"))
+        fs.delete_feature("test/feature-to-delete", delete_data=True)
+        # Data should now have gone
+        assert not os.path.isdir(posixpath.join(self.location, self.file_name, "feature", "feature-to-delete"))
+
+        fs.create_feature(
+            "test/feature-to-delete",
+        )
+        fs.save_dataframe(df1, "test/feature-to-delete")
+        # Check data exists
+        assert os.path.isdir(posixpath.join(self.location, self.file_name, "feature", "feature-to-delete"))
+        fs.delete_feature("test/feature-to-delete")
+        # Check data still exists
+        assert os.path.isdir(posixpath.join(self.location, self.file_name, "feature", "feature-to-delete"))
+        # Call clean_namespace to get rid of data
+        fs.clean_namespace("test")
+        assert not os.path.isdir(posixpath.join(self.location, self.file_name, "feature", "feature-to-delete"))
 
     def test_clone_features(self):
         print("Testing cloned features")
@@ -217,6 +249,9 @@ class TestFeatureStore:
         print(df1.rename(columns={"value": "test/cloned-feature"}))
         print(len(df1), len(result))
         assert result.equals(df1.rename(columns={"value": "test/cloned-feature"}))
+
+        fs.delete_feature("test/old-feature")
+        fs.delete_feature("test/cloned-feature")
 
     def test_dataframes(self):
         print("Testing data load/save...")

@@ -12,6 +12,7 @@ import pyarrow as pa
 import re
 import copy
 import posixpath
+import fsspec
 from . import utils
 
 
@@ -91,6 +92,23 @@ class Namespace(Base, FeatureStoreMixin):
     def namespace(cls):
         return cls.name
 
+    def clean(self):
+        # Check for unused data and remove it
+        fs, fs_token, paths = fsspec.get_fs_token_paths(
+            self.url, storage_options=self.storage_options
+        )
+        feature_paths = fs.ls(
+            posixpath.join(paths[0], "feature")
+        )
+        active_feature_names = [f.name for f in self.features]
+        feature_data = [f.split('/')[-1] for f in feature_paths]
+        for feature in feature_data:
+            if feature not in active_feature_names:
+                # Redundant data... delete it
+                fs.rm(
+                    posixpath.join(paths[0], "feature", feature),
+                    recursive=True
+                )
 
 class Feature(Base, FeatureStoreMixin):
     __tablename__ = "feature"
@@ -330,6 +348,19 @@ class Feature(Base, FeatureStoreMixin):
             return None
         else:
             return result["value"].iloc[0]
+
+    def delete_data(self):
+        # Deletes all of the data on this feature
+        fs, fs_token, paths = fsspec.get_fs_token_paths(
+            self.namespace_object.url, storage_options=self.namespace_object.storage_options
+        )
+        feature_path = posixpath.join(
+            paths[0], "feature", self.name
+        )
+        try:
+            fs.rm(feature_path, recursive=True)
+        except FileNotFoundError:
+            pass
 
     def import_data_from(self, other):
         # Copy data over from another feature

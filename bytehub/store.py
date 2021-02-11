@@ -102,7 +102,7 @@ class FeatureStore:
             df = df[[*column_order, *df.columns.difference(column_order)]]
             return df
 
-    def _delete(self, cls, namespace=None, name=None):
+    def _delete(self, cls, namespace=None, name=None, delete_data=False):
         namespace, name = FeatureStore._split_name(namespace, name)
         with conn.session_scope(self.session_maker) as session:
             r = session.query(cls)
@@ -115,6 +115,8 @@ class FeatureStore:
                 raise RuntimeError(
                     f"No existing {cls.__name__} named {name} in {namespace}"
                 )
+            if hasattr(obj, 'delete_data') and delete_data:
+                obj.delete_data()
             session.delete(obj)
 
     def _update(self, cls, namespace=None, name=None, payload={}):
@@ -215,6 +217,23 @@ class FeatureStore:
             )
         self._delete(model.Namespace, name=name)
 
+    def clean_namespace(self, name):
+        """Removes any data that is not associated with features in the namespace.
+        Run this to free up disk space after deleting features
+
+        Args:
+            name:, str: namespace to clean
+        """
+        with conn.session_scope(self.session_maker) as session:
+            r = session.query(model.Namespace)
+            r = r.filter_by(name=name)
+            namespace = r.one_or_none()
+            if not namespace:
+                raise RuntimeError(
+                    f"No existing Namespace named {name}"
+                )
+            namespace.clean()
+
     def list_features(self, **kwargs):
         """List features in the feature store.
 
@@ -294,14 +313,17 @@ class FeatureStore:
             # Copy data to new feature, if this raises exception will rollback
             new_feature.import_data_from(feature)
 
-    def delete_feature(self, name, namespace=None):
+    def delete_feature(self, name, namespace=None, delete_data=False):
         """Delete a feature from the feature store.
 
         Args:
             name, str: name of feature to delete.
             namespace, str: namespace, if not included in feature name.
+            delete_data, boolean, optional: if set to true will delete underlying stored data
+                for this feature, otherwise default behaviour is to delete the feature store
+                metadata but leave the stored timeseries values intact
         """
-        self._delete(model.Feature, namespace, name)
+        self._delete(model.Feature, namespace, name, delete_data=delete_data)
 
     def update_feature(self, name, namespace=None, **kwargs):
         """Update a namespace in the feature store.
