@@ -194,7 +194,7 @@ class TestFeatureStore:
 
         assert fs.list_features(namespace="test2").empty
         assert fs.list_features(namespace="test").empty
-    
+
     def test_data_deletion(self):
         print("Testing data deletion...")
         fs = self.fs
@@ -208,23 +208,43 @@ class TestFeatureStore:
         )
         fs.save_dataframe(df1, "test/feature-to-delete")
         # Check data exists
-        assert os.path.isdir(posixpath.join(self.location, self.file_name, "feature", "feature-to-delete"))
+        assert os.path.isdir(
+            posixpath.join(
+                self.location, self.file_name, "feature", "feature-to-delete"
+            )
+        )
         fs.delete_feature("test/feature-to-delete", delete_data=True)
         # Data should now have gone
-        assert not os.path.isdir(posixpath.join(self.location, self.file_name, "feature", "feature-to-delete"))
+        assert not os.path.isdir(
+            posixpath.join(
+                self.location, self.file_name, "feature", "feature-to-delete"
+            )
+        )
 
         fs.create_feature(
             "test/feature-to-delete",
         )
         fs.save_dataframe(df1, "test/feature-to-delete")
         # Check data exists
-        assert os.path.isdir(posixpath.join(self.location, self.file_name, "feature", "feature-to-delete"))
+        assert os.path.isdir(
+            posixpath.join(
+                self.location, self.file_name, "feature", "feature-to-delete"
+            )
+        )
         fs.delete_feature("test/feature-to-delete")
         # Check data still exists
-        assert os.path.isdir(posixpath.join(self.location, self.file_name, "feature", "feature-to-delete"))
+        assert os.path.isdir(
+            posixpath.join(
+                self.location, self.file_name, "feature", "feature-to-delete"
+            )
+        )
         # Call clean_namespace to get rid of data
         fs.clean_namespace("test")
-        assert not os.path.isdir(posixpath.join(self.location, self.file_name, "feature", "feature-to-delete"))
+        assert not os.path.isdir(
+            posixpath.join(
+                self.location, self.file_name, "feature", "feature-to-delete"
+            )
+        )
 
     def test_clone_features(self):
         print("Testing cloned features")

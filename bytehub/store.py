@@ -115,7 +115,7 @@ class FeatureStore:
                 raise RuntimeError(
                     f"No existing {cls.__name__} named {name} in {namespace}"
                 )
-            if hasattr(obj, 'delete_data') and delete_data:
+            if hasattr(obj, "delete_data") and delete_data:
                 obj.delete_data()
             session.delete(obj)
 
@@ -229,9 +229,7 @@ class FeatureStore:
             r = r.filter_by(name=name)
             namespace = r.one_or_none()
             if not namespace:
-                raise RuntimeError(
-                    f"No existing Namespace named {name}"
-                )
+                raise RuntimeError(f"No existing Namespace named {name}")
             namespace.clean()
 
     def list_features(self, **kwargs):

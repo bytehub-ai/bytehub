@@ -97,18 +97,14 @@ class Namespace(Base, FeatureStoreMixin):
         fs, fs_token, paths = fsspec.get_fs_token_paths(
             self.url, storage_options=self.storage_options
         )
-        feature_paths = fs.ls(
-            posixpath.join(paths[0], "feature")
-        )
+        feature_paths = fs.ls(posixpath.join(paths[0], "feature"))
         active_feature_names = [f.name for f in self.features]
-        feature_data = [f.split('/')[-1] for f in feature_paths]
+        feature_data = [f.split("/")[-1] for f in feature_paths]
         for feature in feature_data:
             if feature not in active_feature_names:
                 # Redundant data... delete it
-                fs.rm(
-                    posixpath.join(paths[0], "feature", feature),
-                    recursive=True
-                )
+                fs.rm(posixpath.join(paths[0], "feature", feature), recursive=True)
+
 
 class Feature(Base, FeatureStoreMixin):
     __tablename__ = "feature"
@@ -352,11 +348,10 @@ class Feature(Base, FeatureStoreMixin):
     def delete_data(self):
         # Deletes all of the data on this feature
         fs, fs_token, paths = fsspec.get_fs_token_paths(
-            self.namespace_object.url, storage_options=self.namespace_object.storage_options
+            self.namespace_object.url,
+            storage_options=self.namespace_object.storage_options,
         )
-        feature_path = posixpath.join(
-            paths[0], "feature", self.name
-        )
+        feature_path = posixpath.join(paths[0], "feature", self.name)
         try:
             fs.rm(feature_path, recursive=True)
         except FileNotFoundError:
