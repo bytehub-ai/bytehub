@@ -6,7 +6,7 @@
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
 
-## What is a feature store?
+## 💾 What is a feature store?
 
 A feature store is a data storage system for data science and machine-learning. It can store _raw data_ and also transformed _features_, which can be fed straight into an ML model or training script.
 
@@ -20,7 +20,13 @@ The [Bytehub Feature Store](https://www.bytehub.ai) is designed to:
 
 It is built on [Dask](https://dask.org/) to support large datasets and cluster compute environments.
 
-## Quick-start
+## 📖 Documentation and tutorials
+
+Stay tuned... coming soon.
+
+## 🦉 Features
+
+## 🚀 Quick-start
 
 Install using pip:
 
@@ -41,22 +47,18 @@ Data lives inside _namespaces_ within each feature store. They can be used to se
 
 Create a _feature_ inside this namespace which will be used to store a timeseries of pre-prepared data:
 
-    fs.create_feature('dev/first-deature', description='First feature')
+    fs.create_feature('dev/first-feature', description='First feature')
 
 Finally save some data into the feature store:
 
     dts = pd.date_range('2020-01-01', '2021-02-09')
     df = pd.DataFrame({'time': dts, 'value': list(range(len(dts)))})
 
-    fs.save_dataframe(df, 'dev/first-deature')
+    fs.save_dataframe(df, 'dev/first-feature')
 
 The data is now stored, ready to be resampled, merged with other data, and fed to machine-learning models.
 
-## Roadmap
+## 🐾 Roadmap
 
 * _Tasks_ to automate updates to features using orchestration tools like [Airflow](https://airflow.apache.org/)
 * _Transforms_ to automate feature engineering activity.
-
-## Documentation and tutorials
-
-Stay tuned... coming soon.

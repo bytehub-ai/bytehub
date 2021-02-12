@@ -11,6 +11,7 @@ import numpy as np
 import pyarrow as pa
 import re
 import copy
+import types
 import posixpath
 import fsspec
 from . import utils
@@ -114,11 +115,30 @@ class Feature(Base, FeatureStoreMixin):
 
     partition = Column(partitions, default="date", nullable=False)
     serialized = Column(Boolean, default=False, nullable=False)
+    transform = Column(JSON, nullable=True)
 
     @validates("serialized")
     def validate_serialized(self, key, value):
-        if self.serialized is not None:
+        if self.serialized is not None and value != self.serialized:
             raise ValueError("Cannot change serialized setting on existing feature")
+        return value
+
+    @validates("transform")
+    def validate_transform(self, key, value):
+        if not value:
+            return value
+        if not isinstance(value.get("transform"), types.FunctionType):
+            raise ValueError(
+                "Transform must be a Python function, accepting a single dataframe input"
+            )
+        assert "function" in values.keys(), "Transform must have a function defined"
+        assert "args" in values.keys(), "Transform must have arguments defined"
+        # Convert function to base64/cloudpickle format
+        transform = {
+            "format": "cloudpickle",
+            "function": utils.serialize(value["function"]),
+            "args": value["args"],
+        }
         return value
 
     @classmethod

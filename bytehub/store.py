@@ -3,6 +3,7 @@ import pandas as pd
 from dask import dataframe as dd
 import posixpath
 import functools
+import json
 from sqlalchemy.sql import text
 from . import _connection as conn
 from . import model
@@ -337,6 +338,40 @@ class FeatureStore:
             valid=["description", "meta"],
         )
         self._update(model.Feature, name=name, namespace=namespace, payload=kwargs)
+
+    def transform(self, name, namespace=None, **args):
+        """Decorator for creating/updating virtual (transformed) features.
+        Use this on a function that accepts a dataframe input and returns an output dataframe
+        of tranformed values.
+
+        Args:
+            name, str: feature to update
+            namespace, str: namespace, if not included in feature name
+            **args: features which should be transformed by this one
+        """
+
+        def decorator(func):
+            # Create or update feature with transform
+            computed_from = [f"{ns}/{n}" for ns, n in self._unpack_list(args)]
+            for feature in computed_from:
+                assert self._exists(
+                    model.Feature, name=feature
+                ), f"{feature} does not exist in the feature store"
+            transform = {"function": func, "args": computed_from}
+            payload = {**kwargs, "transform": transform, "description": func.__doc__}
+            if self._exists(model.Feature, namespace=namespace, name=name):
+                # Already exists, update it
+                self.update_feature(name, namespace=namespace, **payload)
+            else:
+                # Create a new feature
+                self.create_feature(name, namespace=namespace, **payload)
+            # Call the transform
+            def wrapped_func(*args, **kwargs):
+                return func(*args, **kwargs)
+
+            return wrapped_func
+
+        return decorator
 
     def load_dataframe(
         self,
