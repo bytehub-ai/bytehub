@@ -15,6 +15,7 @@ import types
 import posixpath
 import fsspec
 from . import utils
+from . import _connection as conn
 
 
 Base = declarative_base()
@@ -117,6 +118,10 @@ class Feature(Base, FeatureStoreMixin):
     serialized = Column(Boolean, default=False, nullable=False)
     transform = Column(JSON, nullable=True)
 
+    @hybrid_property
+    def full_name(self):
+        return f"{self.namespace}/{self.name}"
+
     @validates("serialized")
     def validate_serialized(self, key, value):
         if self.serialized is not None and value != self.serialized:
@@ -127,19 +132,18 @@ class Feature(Base, FeatureStoreMixin):
     def validate_transform(self, key, value):
         if not value:
             return value
-        if not isinstance(value.get("transform"), types.FunctionType):
+        if not isinstance(value.get("function"), types.FunctionType):
             raise ValueError(
                 "Transform must be a Python function, accepting a single dataframe input"
             )
-        assert "function" in values.keys(), "Transform must have a function defined"
-        assert "args" in values.keys(), "Transform must have arguments defined"
+        assert "function" in value.keys(), "Transform must have a function defined"
+        assert "args" in value.keys(), "Transform must have arguments defined"
         # Convert function to base64/cloudpickle format
-        transform = {
+        return {
             "format": "cloudpickle",
             "function": utils.serialize(value["function"]),
             "args": value["args"],
         }
-        return value
 
     @classmethod
     def clone_from(cls, other, namespace, name):
@@ -245,9 +249,94 @@ class Feature(Base, FeatureStoreMixin):
         except Exception as e:
             raise RuntimeError(f"Unable to save data to {path}: {str(e)}")
 
+    def load_transform(self, from_date, to_date, freq, time_travel, mode, callers=[]):
+        # Get the SQLAlchemy session for this feature
+        session = sa.inspect(self).session
+        if not session:
+            raise RuntimeError(f"{self.name} is not bound to an SQLAlchemy session")
+        # Check for recursive transforms
+        if self.full_name in callers:
+            raise RuntimeError(
+                f"Recursive feature transform detected on {self.full_name}"
+            )
+        # Load the transform function
+        func = utils.deserialize(self.transform["function"])
+        # Load the features to transform
+        dfs = []
+        # Load each requested feature
+        for f in self.transform["args"]:
+            namespace, name = f.split("/")[0], "/".join(f.split("/")[1:])
+            feature = (
+                session.query(Feature)
+                .filter_by(name=name, namespace=namespace)
+                .one_or_none()
+            )
+            if not feature:
+                raise ValueError(f"No feature named {name} exists in {namespace}")
+            # Load individual feature
+            df = feature.load(
+                from_date=from_date,
+                to_date=to_date,
+                freq=freq,
+                time_travel=time_travel,
+                mode=mode,
+                callers=[*callers, self.full_name],
+            )
+            dfs.append(df.rename(columns={"value": f"{namespace}/{name}"}))
+        # Merge features into a single dataframe
+        if mode == "pandas":
+            dfs = pd.concat(dfs, join="outer", axis=1).ffill()
+        elif mode == "dask":
+            dfs = functools.reduce(
+                lambda left, right: dd.merge(
+                    left, right, left_index=True, right_index=True, how="outer"
+                ),
+                dfs,
+            )
+            dfs = dfs.ffill()
+        else:
+            raise NotImplementedError(f"{mode} has not been implemented")
+        # Make sure columns are in the same order as args
+        dfs = dfs[self.transform["args"]]
+        # Apply transform function
+        transformed = func(dfs)
+        # Make sure output has a single column named 'value'
+        if isinstance(transformed, pd.Series) or isinstance(transformed, dd.Series):
+            transformed = transformed.to_frame("value")
+        if mode == "pandas" and not isinstance(transformed, pd.DataFrame):
+            raise RuntimeError(
+                f"This featurestore has a Pandas backend, therefore transforms should return Pandas dataframes"
+            )
+        if mode == "dask" and not isinstance(transformed, pd.DataFrame):
+            raise RuntimeError(
+                f"This featurestore has a Dask backend, therefore transforms should return Dask dataframes"
+            )
+        if len(transformed.columns) != 1:
+            raise RuntimeError(
+                f"Transform function should return a dataframe with a datetime index and single value column"
+            )
+        transformed.columns = ["value"]
+        return transformed
+
     def load(
-        self, from_date=None, to_date=None, freq=None, time_travel=None, mode="pandas"
+        self,
+        from_date=None,
+        to_date=None,
+        freq=None,
+        time_travel=None,
+        mode="pandas",
+        callers=[],
     ):
+        # Does this feature need to be transformed?
+        if self.transform:
+            return self.load_transform(
+                from_date=from_date,
+                to_date=to_date,
+                freq=freq,
+                time_travel=time_travel,
+                mode=mode,
+                callers=callers,
+            )
         # Get location
         url = self.namespace_object.url
         storage_options = self.namespace_object.storage_options

@@ -16,4 +16,4 @@ def serialize(func):
 
 
 def deserialize(func_string):
-    return cloudpickle.loads(base64.b64decode(func.encode("utf-8")))
+    return cloudpickle.loads(base64.b64decode(func_string.encode("utf-8")))
