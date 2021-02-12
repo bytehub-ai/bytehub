@@ -12,3 +12,4 @@ dependencies:
   - jupyterlab
   - pytest
   - black
+  - pre-commit
