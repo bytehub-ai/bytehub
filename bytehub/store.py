@@ -97,6 +97,9 @@ class FeatureStore:
             # Filter by regex search on name
             if regex:
                 df = df[df.name.str.contains(regex)]
+            # List transforms as simple true/false
+            if "transform" in df.columns:
+                df = df.assign(transform=df["transform"].apply(lambda x: x is not None))
             # Sort the columns
             column_order = ["namespace", "name", "version", "description", "meta"]
             column_order = [c for c in column_order if c in df.columns]
