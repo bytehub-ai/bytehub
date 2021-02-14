@@ -14,6 +14,7 @@ import copy
 import types
 import posixpath
 import fsspec
+import functools
 from . import utils
 from . import _connection as conn
 
@@ -445,9 +446,10 @@ class Feature(Base, FeatureStoreMixin):
         else:
             raise ValueError(f'Unknown mode: {mode}, should be "pandas" or "dask"')
 
-    def last(self):
+    def last(self, mode="pandas"):
         # Fetch last feature value
-        ddf = self.load(mode="dask")
+        # TODO: Make this more efficient in Pandas mode
+        ddf = self.load(mode=mode)
         result = ddf.tail(1)
         if result.empty:
             return None

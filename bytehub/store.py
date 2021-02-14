@@ -500,7 +500,7 @@ class FeatureStore:
                 if not feature:
                     raise ValueError(f"No feature named {name} exists in {namespace}")
                 # Load individual feature
-                result[f"{namespace}/{name}"] = feature.last()
+                result[f"{namespace}/{name}"] = feature.last(mode=self.mode)
         return result
 
     def create_task(self):
