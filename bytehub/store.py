@@ -3,6 +3,7 @@ import pandas as pd
 from dask import dataframe as dd
 import posixpath
 import functools
+import json
 from sqlalchemy.sql import text
 from . import _connection as conn
 from . import model
@@ -96,6 +97,9 @@ class FeatureStore:
             # Filter by regex search on name
             if regex:
                 df = df[df.name.str.contains(regex)]
+            # List transforms as simple true/false
+            if "transform" in df.columns:
+                df = df.assign(transform=df["transform"].apply(lambda x: x is not None))
             # Sort the columns
             column_order = ["namespace", "name", "version", "description", "meta"]
             column_order = [c for c in column_order if c in df.columns]
@@ -269,7 +273,7 @@ class FeatureStore:
         """
         self.__class__._validate_kwargs(
             kwargs,
-            valid=["description", "meta", "partition", "serialized"],
+            valid=["description", "meta", "partition", "serialized", "transform"],
             mandatory=[],
         )
         self._create(model.Feature, namespace=namespace, name=name, payload=kwargs)
@@ -309,7 +313,8 @@ class FeatureStore:
             new_feature = model.Feature.clone_from(feature, to_namespace, to_name)
             session.add(new_feature)
             # Copy data to new feature, if this raises exception will rollback
-            new_feature.import_data_from(feature)
+            if not new_feature.transform:
+                new_feature.import_data_from(feature)
 
     def delete_feature(self, name, namespace=None, delete_data=False):
         """Delete a feature from the feature store.
@@ -334,9 +339,45 @@ class FeatureStore:
         """
         self.__class__._validate_kwargs(
             kwargs,
-            valid=["description", "meta"],
+            valid=["description", "meta", "transform"],
         )
         self._update(model.Feature, name=name, namespace=namespace, payload=kwargs)
+
+    def transform(self, name, namespace=None, from_features=[]):
+        """Decorator for creating/updating virtual (transformed) features.
+        Use this on a function that accepts a dataframe input and returns an output dataframe
+        of tranformed values.
+
+        Args:
+            name, str: feature to update
+            namespace, str: namespace, if not included in feature name
+            **args: features which should be transformed by this one
+        """
+
+        def decorator(func):
+            # Create or update feature with transform
+            to_namespace, to_name = self._split_name(namespace=namespace, name=name)
+            computed_from = [f"{ns}/{n}" for ns, n in self._unpack_list(from_features)]
+            for feature in computed_from:
+                assert self._exists(
+                    model.Feature, name=feature
+                ), f"{feature} does not exist in the feature store"
+
+            transform = {"function": func, "args": computed_from}
+            payload = {"transform": transform, "description": func.__doc__}
+            if self._exists(model.Feature, namespace=to_namespace, name=to_name):
+                # Already exists, update it
+                self.update_feature(to_name, namespace=to_namespace, **payload)
+            else:
+                # Create a new feature
+                self.create_feature(to_name, namespace=to_namespace, **payload)
+            # Call the transform
+            def wrapped_func(*args, **kwargs):
+                return func(*args, **kwargs)
+
+            return wrapped_func
+
+        return decorator
 
     def load_dataframe(
         self,
@@ -459,7 +500,7 @@ class FeatureStore:
                 if not feature:
                     raise ValueError(f"No feature named {name} exists in {namespace}")
                 # Load individual feature
-                result[f"{namespace}/{name}"] = feature.last()
+                result[f"{namespace}/{name}"] = feature.last(mode=self.mode)
         return result
 
     def create_task(self):

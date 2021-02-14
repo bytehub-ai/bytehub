@@ -591,3 +591,75 @@ class TestFeatureStore:
         fs.delete_feature("test/last1")
         fs.delete_feature("test/last2")
         fs.delete_feature("test/last3")
+
+    def test_transforms(self):
+        print("Testing feature transforms...")
+        fs = self.fs
+
+        dts = pd.date_range("2021-01-01", "2021-03-01")
+        df1 = pd.DataFrame(
+            {
+                "time": dts,
+                "test/raw-feature": np.random.randint(0, 100, size=len(dts)),
+            }
+        ).set_index("time")
+
+        fs.create_feature("test/raw-feature")
+        fs.save_dataframe(df1)
+
+        # Create some transforms
+        @fs.transform("test/squared-feature", from_features=["test/raw-feature"])
+        def square(df):
+            return df ** 2
+
+        @fs.transform(
+            "test/combined-feature",
+            from_features=["test/raw-feature", "test/squared-feature"],
+        )
+        def square(df):
+            return df["test/raw-feature"] + df["test/squared-feature"]
+
+        # Get transformed features
+        result = fs.load_dataframe(
+            ["test/raw-feature", "test/squared-feature", "test/combined-feature"]
+        )
+        assert result["test/squared-feature"].equals(result["test/raw-feature"] ** 2)
+        assert result["test/combined-feature"].equals(
+            result["test/raw-feature"] ** 2 + result["test/raw-feature"]
+        )
+
+        result = fs.last(
+            ["test/raw-feature", "test/squared-feature", "test/combined-feature"]
+        )
+        assert result["test/squared-feature"] == result["test/raw-feature"] ** 2
+        assert (
+            result["test/combined-feature"]
+            == result["test/raw-feature"] ** 2 + result["test/raw-feature"]
+        )
+
+        # Try to create recursive feature loop
+        fs.create_feature("test/recursive-feature")
+
+        @fs.transform(
+            "test/recursive-feature-2", from_features=["test/recursive-feature"]
+        )
+        def passthrough(df):
+            return df
+
+        @fs.transform(
+            "test/recursive-feature", from_features=["test/recursive-feature-2"]
+        )
+        def passthrough(df):
+            return df
+
+        # This should fail
+        with pytest.raises(Exception):
+            df = fs.load_dataframe("test/recursive-feature")
+        with pytest.raises(Exception):
+            df = fs.load_dataframe("test/recursive-feature-2")
+
+        fs.delete_feature("test/raw-feature")
+        fs.delete_feature("test/squared-feature")
+        fs.delete_feature("test/combined-feature")
+        fs.delete_feature("test/recursive-feature")
+        fs.delete_feature("test/recursive-feature-2")

@@ -1,12 +1,12 @@
-# ByteHub Feature Store
+# ByteHub [![PyPI Latest Release](https://img.shields.io/pypi/v/bytehub.svg)](https://pypi.org/project/bytehub/) [![Issues](https://img.shields.io/github/workflow/status/bytehub-ai/bytehub/Tests)](https://github.com/bytehub-ai/bytehub/actions?query=workflow%3ATests) [![Issues](https://img.shields.io/github/issues/bytehub-ai/bytehub)](https://github.com/bytehub-ai/bytehub/issues) [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
-[![PyPI Latest Release](https://img.shields.io/pypi/v/bytehub.svg)](https://pypi.org/project/bytehub/)
-[![Issues](https://img.shields.io/github/workflow/status/bytehub-ai/bytehub/Tests)](https://github.com/bytehub-ai/bytehub/actions?query=workflow%3ATests)
-[![Issues](https://img.shields.io/github/issues/bytehub-ai/bytehub)](https://github.com/bytehub-ai/bytehub/issues)
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+<img src="https://uploads-ssl.webflow.com/5f187c12c1b99c41557b035e/6026e99dad5c3cf816547670_bytehub-rect-logo.png" align="right" alt="ByteHub logo" width="120" height="60">
+
+An easy-to-use feature store.
 
 
-## What is a feature store?
+
+## 💾 What is a feature store?
 
 A feature store is a data storage system for data science and machine-learning. It can store _raw data_ and also transformed _features_, which can be fed straight into an ML model or training script.
 
@@ -20,7 +20,20 @@ The [Bytehub Feature Store](https://www.bytehub.ai) is designed to:
 
 It is built on [Dask](https://dask.org/) to support large datasets and cluster compute environments.
 
-## Quick-start
+## 🦉 Features
+
+* Searchable **feature information** and **metadata** can be stored locally using SQLite or in a remote database.
+* Timeseries data is saved in [Parquet format](https://parquet.apache.org/) using Dask, making it readable from a wide range of other tools. Data can reside either on a local filesystem or in a [cloud storage service](https://docs.dask.org/en/latest/remote-data-services.html), e.g. AWS S3. 
+* Supports **timeseries joins**, along with **filtering** and **resampling** operations to make it easy to load and prepare datasets for ML training.
+* Feature engineering steps can be implemented as **transforms**. These are saved within the feature store, and allows for simple, resusable preparation of raw data.
+* **Time travel** can retrieve feature values based on when they were created, which can be useful for forecasting applications.
+* Simple APIs to retrieve timeseries dataframes for training, or a dictionary of the most recent feature values, which can be used for inference.
+
+## 📖 Documentation and tutorials
+
+See the [ByteHub documentation](https://docs.bytehub.ai/) and [notebook tutorials](https://github.com/bytehub-ai/code-examples/tree/main/tutorials) to learn more and get started.
+
+## 🚀 Quick-start
 
 Install using pip:
 
@@ -36,27 +49,36 @@ Create a local SQLite feature store by running:
 Data lives inside _namespaces_ within each feature store. They can be used to separate projects or environments. Create a namespace as follows:
 
     fs.create_namespace(
-        'dev', url='/tmp/featurestore/dev', description='Dev datasets'
+        'tutorial', url='/tmp/featurestore/tutorial', description='Tutorial datasets'
     )
 
 Create a _feature_ inside this namespace which will be used to store a timeseries of pre-prepared data:
 
-    fs.create_feature('dev/first-deature', description='First feature')
+    fs.create_feature('tutorial/numbers', description='Timeseries of numbers')
 
-Finally save some data into the feature store:
+Now save some data into the feature store:
 
     dts = pd.date_range('2020-01-01', '2021-02-09')
     df = pd.DataFrame({'time': dts, 'value': list(range(len(dts)))})
 
-    fs.save_dataframe(df, 'dev/first-deature')
+    fs.save_dataframe(df, 'tutorial/numbers')
 
-The data is now stored, ready to be resampled, merged with other data, and fed to machine-learning models.
+The data is now stored, ready to be transformed, resampled, merged with other data, and fed to machine-learning models.
 
-## Roadmap
+We can engineer new features from existing ones using the _transform_ decorator. Suppose we want to define a new feature that contains the squared values of `tutorial/numbers`:
+
+    @fs.transform('tutorial/squared', from_features=['tutorial/numbers'])
+    def squared_numbers(df):
+        # This transform function receives dataframe input, and defines a transform operation
+        return df ** 2 # Square the input
+
+Now both features are saved in the feature store, and can be queried using:
+
+    df_query = fs.load_dataframe(
+        ['tutorial/numbers', 'tutorial/squared'],
+        from_date='2021-01-01', to_date='2021-01-31'
+    )
+
+## 🐾 Roadmap
 
 * _Tasks_ to automate updates to features using orchestration tools like [Airflow](https://airflow.apache.org/)
-* _Transforms_ to automate feature engineering activity.
-
-## Documentation and tutorials
-
-Stay tuned... coming soon.
