@@ -6,7 +6,7 @@ import functools
 import json
 from sqlalchemy.sql import text
 from . import _connection as conn
-from . import model
+from . import _model as model
 
 
 class FeatureStore:
