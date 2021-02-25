@@ -29,6 +29,9 @@
 <pre><code class="python">import pandas as pd
 from dask import dataframe as dd
 import posixpath
+import requests
+import getpass
+from requests_oauthlib import OAuth2Session
 import functools
 import json
 from ._base import BaseFeatureStore
@@ -36,23 +39,120 @@ from ._base import BaseFeatureStore
 
 class CloudFeatureStore(BaseFeatureStore):
     &#34;&#34;&#34;Cloud Feature Store
-    Connects directly to a hosted feature store via REST API.
+    Connects to a hosted feature store via REST API.
     &#34;&#34;&#34;
 
-    def __init__(self, connection_string=&#34;sqlite:///bytehub.db&#34;, backend=&#34;pandas&#34;):
+    def __init__(
+        self,
+        connection_string=&#34;https://api.bytehub.ai&#34;,
+        backend=&#34;pandas&#34;,
+        enable_transforms=False,
+    ):
         &#34;&#34;&#34;Create a Feature Store, or connect to an existing one
 
         Args:
-            connection_string, str: SQLAlchemy connection string for database
-                containing feature store metadata - defaults to local sqlite file
-            backend, str: eith &#39;pandas&#39; (default) or &#39;dask&#39;, specifying the type
+            connection_string, str: URL of ByteHub Cloud, e.g. https://api.bytehub.ai
+            backend, str: either &#39;pandas&#39; (default) or &#39;dask&#39;, specifying the type
                 of dataframes returned by load_dataframe
+            enable_transforms, bool: whether to allow execution of pickled functions
+                stored in the feature store - only enable if you trust the store
         &#34;&#34;&#34;
-        pass
+        self._endpoint = connection_string
+        if &#34;/v1&#34; not in self._endpoint:
+            # Add API version
+            self._endpoint = posixpath.join(self._endpoint, &#34;v1/&#34;)
+        if self._endpoint[-1] != &#34;/&#34;:
+            self._endpoint += &#34;/&#34;
+        # Get the Oauth2 URLs
+        response = requests.get(self.endpoint)
+        self._check_response(response)
+        self._urls = response.json()
+        self._client_id = self._urls.pop(&#34;client_id&#34;)
+        # Decide how to authenticate
+        if os.environ.get(&#34;BYTEHUB_TOKEN&#34;):
+            # Non-interactive login using refresh token
+            oauth = OAuth2Session(
+                self.client_id, token={&#34;refresh_token&#34;: os.environ.get(&#34;BYTEHUB_TOKEN&#34;)}
+            )
+            tokens = oauth.refresh_token(
+                self.urls[&#34;token_url&#34;],
+                client_id=self._client_id,
+                client_secret=None,
+                include_client_id=True,
+            )
+        else:
+            # Use interactive login
+            oauth = OAuth2Session(client_id, redirect_uri=self.urls[&#34;callback_url&#34;])
+            authorization_url, state = oauth.authorization_url(self._urls[&#34;login_url&#34;])
+            print(
+                f&#34;Please go to {authorization_url} and login. Copy the response code and paste below.&#34;
+            )
+            code_response = getpass(&#34;Response: &#34;)
+            tokens = oauth.fetch_token(
+                self._urls[&#34;token_url&#34;], code=code_response, include_client_id=True
+            )
+        self._tokens = tokens
+
+    def _check_response(self, response):
+        # Raise an exception if response is not OK
+        try:
+            response.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            try:
+                payload = response.json()
+                message = payload.get(&#34;message&#34;, payload.get(&#34;Message&#34;, &#34;&#34;))
+            except requests.exceptions.RequestException:
+                message = response.text
+            raise RuntimeError(message)
+
+    def _check_tokens(self):
+        # Check that token hasn&#39;t expired
+        if time.time() &lt; self._tokens[&#34;expires_at&#34;] - 10:
+            return True
+        else:
+            # Token expired... refresh it
+            if &#34;refresh_token&#34; in self._tokens:
+                oauth = OAuth2Session(self._client_id, token=self._tokens)
+                tokens = oauth.refresh_token(
+                    self._urls[&#34;token_url&#34;],
+                    client_id=self._client_id,
+                    client_secret=None,
+                    include_client_id=True,
+                )
+                self._tokens = tokens
+            else:
+                raise RuntimeError(&#34;Cannot find refresh token&#34;)
+
+    def _api_headers(self):
+        # Headers to add to API requests
+        self._check_tokens()
+        return {
+            &#34;Authorization&#34;: self._tokens[&#34;access_token&#34;],
+        }
+
+    def _refresh(self, name=None):
+        # Check access token expiry, and refresh if required
+        df = self._namespaces
+        if name:
+            df = df[df.name == name]
+        for idx, row in df.iterrows():
+            # Get storage options
+            opt = row[&#34;storage_options&#34;]
+            if &#34;expires&#34; in opt and pd.Timestamp(
+                opt[&#34;expires&#34;]
+            ) &lt; pd.Timestamp.utcnow() + pd.Timedelta(&#34;1min&#34;):
+                self.list_namespaces()
+                return
 
     def list_namespaces(self, **kwargs):
         self.__class__._validate_kwargs(kwargs, [&#34;name&#34;, &#34;namespace&#34;, &#34;regex&#34;])
-        pass
+        url = self._endpoint + &#34;namespace&#34;
+        response = requests.get(url, params=kwargs, headers=self._api_headers())
+        self._check_response(response)
+        df = pd.DataFrame(response.json())
+        # Cache the namespace for use when loading/saving dataframes
+        self._namespaces = df
+        return df
 
     def create_namespace(self, name, **kwargs):
         self.__class__._validate_kwargs(
@@ -60,28 +160,49 @@ class CloudFeatureStore(BaseFeatureStore):
             valid=[&#34;description&#34;, &#34;url&#34;, &#34;storage_options&#34;, &#34;meta&#34;],
             mandatory=[&#34;url&#34;],
         )
-        pass
+        url = self._endpoint + &#34;namespace&#34;
+        params = {&#34;name&#34;: name, **kwargs}
+        response = requests.post(url, params=params, headers=self._api_headers())
+        self._check_response(response)
+        # Call list_namespaces to refresh namespace cache
+        self.list_namespaces()
 
     def update_namespace(self, name, **kwargs):
         self.__class__._validate_kwargs(
             kwargs,
             valid=[&#34;description&#34;, &#34;storage_options&#34;, &#34;meta&#34;],
         )
-        pass
+        url = self._endpoint + &#34;namespace&#34;
+        params = {&#34;name&#34;: name, **kwargs}
+        response = requests.patch(url, params=params, headers=self._api_headers())
+        self._check_response(response)
+        # Call list_namespaces to refresh namespace cache
+        self.list_namespaces()
 
     def delete_namespace(self, name):
         if not self.list_features(namespace=name).empty:
             raise RuntimeError(
                 f&#34;{name} still contains features: these must be deleted first&#34;
             )
-        pass
+        url = self._endpoint + &#34;namespace&#34;
+        response = requests.delete(
+            url, params={&#34;name&#34;: name}, headers=self._api_headers()
+        )
+        self._check_response(response)
+        # Call list_namespaces to refresh namespace cache
+        self.list_namespaces()
 
     def clean_namespace(self, name):
-        pass
+        # TODO: Clean namespace
+        raise NotImplementedError()
 
     def list_features(self, **kwargs):
         self.__class__._validate_kwargs(kwargs, valid=[&#34;name&#34;, &#34;namespace&#34;, &#34;regex&#34;])
-        pass
+        url = self._endpoint + &#34;feature&#34;
+        response = requests.get(url, params=kwargs, headers=self._api_headers())
+        self._check_response(response)
+        df = pd.DataFrame(response.json())
+        return df
 
     def create_feature(self, name, namespace=None, **kwargs):
         self.__class__._validate_kwargs(
@@ -89,7 +210,10 @@ class CloudFeatureStore(BaseFeatureStore):
             valid=[&#34;description&#34;, &#34;meta&#34;, &#34;partition&#34;, &#34;serialized&#34;, &#34;transform&#34;],
             mandatory=[],
         )
-        pass
+        url = self._endpoint + &#34;feature&#34;
+        params = {&#34;name&#34;: name, &#34;namespace&#34;: namespace, **kwargs}
+        response = requests.post(url, params=params, headers=self._api_headers())
+        self._check_response(response)
 
     def clone_feature(self, name, namespace=None, **kwargs):
         self.__class__._validate_kwargs(
@@ -97,17 +221,27 @@ class CloudFeatureStore(BaseFeatureStore):
             valid=[&#34;from_namespace&#34;, &#34;from_name&#34;],
             mandatory=[&#34;from_name&#34;],
         )
-        pass
+        raise NotImplementedError()
 
     def delete_feature(self, name, namespace=None, delete_data=False):
-        pass
+        url = self._endpoint + &#34;feature&#34;
+        response = requests.delete(
+            url,
+            params={&#34;name&#34;: name, &#34;namespace&#34;: namespace},
+            headers=self._api_headers(),
+        )
+        self._check_response(response)
+        # TODO: Delete data
 
     def update_feature(self, name, namespace=None, **kwargs):
         self.__class__._validate_kwargs(
             kwargs,
             valid=[&#34;description&#34;, &#34;meta&#34;, &#34;transform&#34;],
         )
-        pass
+        url = self._endpoint + &#34;feature&#34;
+        params = {&#34;name&#34;: name, &#34;namespace&#34;: namespace, **kwargs}
+        response = requests.patch(url, params=params, headers=self._api_headers())
+        self._check_response(response)
 
     def transform(self, name, namespace=None, from_features=[]):
         pass
@@ -140,40 +274,138 @@ class CloudFeatureStore(BaseFeatureStore):
 <dl>
 <dt id="bytehub.cloud.CloudFeatureStore"><code class="flex name class">
 <span>class <span class="ident">CloudFeatureStore</span></span>
-<span>(</span><span>connection_string='sqlite:///bytehub.db', backend='pandas')</span>
+<span>(</span><span>connection_string='https://api.bytehub.ai', backend='pandas', enable_transforms=False)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Cloud Feature Store
-Connects directly to a hosted feature store via REST API.</p>
+Connects to a hosted feature store via REST API.</p>
 <p>Create a Feature Store, or connect to an existing one</p>
 <h2 id="args">Args</h2>
-<p>connection_string, str: SQLAlchemy connection string for database
-containing feature store metadata - defaults to local sqlite file
-backend, str: eith 'pandas' (default) or 'dask', specifying the type
-of dataframes returned by load_dataframe</p></div>
+<p>connection_string, str: URL of ByteHub Cloud, e.g. <a href="https://api.bytehub.ai">https://api.bytehub.ai</a>
+backend, str: either 'pandas' (default) or 'dask', specifying the type
+of dataframes returned by load_dataframe
+enable_transforms, bool: whether to allow execution of pickled functions
+stored in the feature store - only enable if you trust the store</p></div>
 <details class="source">
 <summary>
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">class CloudFeatureStore(BaseFeatureStore):
     &#34;&#34;&#34;Cloud Feature Store
-    Connects directly to a hosted feature store via REST API.
+    Connects to a hosted feature store via REST API.
     &#34;&#34;&#34;
 
-    def __init__(self, connection_string=&#34;sqlite:///bytehub.db&#34;, backend=&#34;pandas&#34;):
+    def __init__(
+        self,
+        connection_string=&#34;https://api.bytehub.ai&#34;,
+        backend=&#34;pandas&#34;,
+        enable_transforms=False,
+    ):
         &#34;&#34;&#34;Create a Feature Store, or connect to an existing one
 
         Args:
-            connection_string, str: SQLAlchemy connection string for database
-                containing feature store metadata - defaults to local sqlite file
-            backend, str: eith &#39;pandas&#39; (default) or &#39;dask&#39;, specifying the type
+            connection_string, str: URL of ByteHub Cloud, e.g. https://api.bytehub.ai
+            backend, str: either &#39;pandas&#39; (default) or &#39;dask&#39;, specifying the type
                 of dataframes returned by load_dataframe
+            enable_transforms, bool: whether to allow execution of pickled functions
+                stored in the feature store - only enable if you trust the store
         &#34;&#34;&#34;
-        pass
+        self._endpoint = connection_string
+        if &#34;/v1&#34; not in self._endpoint:
+            # Add API version
+            self._endpoint = posixpath.join(self._endpoint, &#34;v1/&#34;)
+        if self._endpoint[-1] != &#34;/&#34;:
+            self._endpoint += &#34;/&#34;
+        # Get the Oauth2 URLs
+        response = requests.get(self.endpoint)
+        self._check_response(response)
+        self._urls = response.json()
+        self._client_id = self._urls.pop(&#34;client_id&#34;)
+        # Decide how to authenticate
+        if os.environ.get(&#34;BYTEHUB_TOKEN&#34;):
+            # Non-interactive login using refresh token
+            oauth = OAuth2Session(
+                self.client_id, token={&#34;refresh_token&#34;: os.environ.get(&#34;BYTEHUB_TOKEN&#34;)}
+            )
+            tokens = oauth.refresh_token(
+                self.urls[&#34;token_url&#34;],
+                client_id=self._client_id,
+                client_secret=None,
+                include_client_id=True,
+            )
+        else:
+            # Use interactive login
+            oauth = OAuth2Session(client_id, redirect_uri=self.urls[&#34;callback_url&#34;])
+            authorization_url, state = oauth.authorization_url(self._urls[&#34;login_url&#34;])
+            print(
+                f&#34;Please go to {authorization_url} and login. Copy the response code and paste below.&#34;
+            )
+            code_response = getpass(&#34;Response: &#34;)
+            tokens = oauth.fetch_token(
+                self._urls[&#34;token_url&#34;], code=code_response, include_client_id=True
+            )
+        self._tokens = tokens
+
+    def _check_response(self, response):
+        # Raise an exception if response is not OK
+        try:
+            response.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            try:
+                payload = response.json()
+                message = payload.get(&#34;message&#34;, payload.get(&#34;Message&#34;, &#34;&#34;))
+            except requests.exceptions.RequestException:
+                message = response.text
+            raise RuntimeError(message)
+
+    def _check_tokens(self):
+        # Check that token hasn&#39;t expired
+        if time.time() &lt; self._tokens[&#34;expires_at&#34;] - 10:
+            return True
+        else:
+            # Token expired... refresh it
+            if &#34;refresh_token&#34; in self._tokens:
+                oauth = OAuth2Session(self._client_id, token=self._tokens)
+                tokens = oauth.refresh_token(
+                    self._urls[&#34;token_url&#34;],
+                    client_id=self._client_id,
+                    client_secret=None,
+                    include_client_id=True,
+                )
+                self._tokens = tokens
+            else:
+                raise RuntimeError(&#34;Cannot find refresh token&#34;)
+
+    def _api_headers(self):
+        # Headers to add to API requests
+        self._check_tokens()
+        return {
+            &#34;Authorization&#34;: self._tokens[&#34;access_token&#34;],
+        }
+
+    def _refresh(self, name=None):
+        # Check access token expiry, and refresh if required
+        df = self._namespaces
+        if name:
+            df = df[df.name == name]
+        for idx, row in df.iterrows():
+            # Get storage options
+            opt = row[&#34;storage_options&#34;]
+            if &#34;expires&#34; in opt and pd.Timestamp(
+                opt[&#34;expires&#34;]
+            ) &lt; pd.Timestamp.utcnow() + pd.Timedelta(&#34;1min&#34;):
+                self.list_namespaces()
+                return
 
     def list_namespaces(self, **kwargs):
         self.__class__._validate_kwargs(kwargs, [&#34;name&#34;, &#34;namespace&#34;, &#34;regex&#34;])
-        pass
+        url = self._endpoint + &#34;namespace&#34;
+        response = requests.get(url, params=kwargs, headers=self._api_headers())
+        self._check_response(response)
+        df = pd.DataFrame(response.json())
+        # Cache the namespace for use when loading/saving dataframes
+        self._namespaces = df
+        return df
 
     def create_namespace(self, name, **kwargs):
         self.__class__._validate_kwargs(
@@ -181,28 +413,49 @@ of dataframes returned by load_dataframe</p></div>
             valid=[&#34;description&#34;, &#34;url&#34;, &#34;storage_options&#34;, &#34;meta&#34;],
             mandatory=[&#34;url&#34;],
         )
-        pass
+        url = self._endpoint + &#34;namespace&#34;
+        params = {&#34;name&#34;: name, **kwargs}
+        response = requests.post(url, params=params, headers=self._api_headers())
+        self._check_response(response)
+        # Call list_namespaces to refresh namespace cache
+        self.list_namespaces()
 
     def update_namespace(self, name, **kwargs):
         self.__class__._validate_kwargs(
             kwargs,
             valid=[&#34;description&#34;, &#34;storage_options&#34;, &#34;meta&#34;],
         )
-        pass
+        url = self._endpoint + &#34;namespace&#34;
+        params = {&#34;name&#34;: name, **kwargs}
+        response = requests.patch(url, params=params, headers=self._api_headers())
+        self._check_response(response)
+        # Call list_namespaces to refresh namespace cache
+        self.list_namespaces()
 
     def delete_namespace(self, name):
         if not self.list_features(namespace=name).empty:
             raise RuntimeError(
                 f&#34;{name} still contains features: these must be deleted first&#34;
             )
-        pass
+        url = self._endpoint + &#34;namespace&#34;
+        response = requests.delete(
+            url, params={&#34;name&#34;: name}, headers=self._api_headers()
+        )
+        self._check_response(response)
+        # Call list_namespaces to refresh namespace cache
+        self.list_namespaces()
 
     def clean_namespace(self, name):
-        pass
+        # TODO: Clean namespace
+        raise NotImplementedError()
 
     def list_features(self, **kwargs):
         self.__class__._validate_kwargs(kwargs, valid=[&#34;name&#34;, &#34;namespace&#34;, &#34;regex&#34;])
-        pass
+        url = self._endpoint + &#34;feature&#34;
+        response = requests.get(url, params=kwargs, headers=self._api_headers())
+        self._check_response(response)
+        df = pd.DataFrame(response.json())
+        return df
 
     def create_feature(self, name, namespace=None, **kwargs):
         self.__class__._validate_kwargs(
@@ -210,7 +463,10 @@ of dataframes returned by load_dataframe</p></div>
             valid=[&#34;description&#34;, &#34;meta&#34;, &#34;partition&#34;, &#34;serialized&#34;, &#34;transform&#34;],
             mandatory=[],
         )
-        pass
+        url = self._endpoint + &#34;feature&#34;
+        params = {&#34;name&#34;: name, &#34;namespace&#34;: namespace, **kwargs}
+        response = requests.post(url, params=params, headers=self._api_headers())
+        self._check_response(response)
 
     def clone_feature(self, name, namespace=None, **kwargs):
         self.__class__._validate_kwargs(
@@ -218,17 +474,27 @@ of dataframes returned by load_dataframe</p></div>
             valid=[&#34;from_namespace&#34;, &#34;from_name&#34;],
             mandatory=[&#34;from_name&#34;],
         )
-        pass
+        raise NotImplementedError()
 
     def delete_feature(self, name, namespace=None, delete_data=False):
-        pass
+        url = self._endpoint + &#34;feature&#34;
+        response = requests.delete(
+            url,
+            params={&#34;name&#34;: name, &#34;namespace&#34;: namespace},
+            headers=self._api_headers(),
+        )
+        self._check_response(response)
+        # TODO: Delete data
 
     def update_feature(self, name, namespace=None, **kwargs):
         self.__class__._validate_kwargs(
             kwargs,
             valid=[&#34;description&#34;, &#34;meta&#34;, &#34;transform&#34;],
         )
-        pass
+        url = self._endpoint + &#34;feature&#34;
+        params = {&#34;name&#34;: name, &#34;namespace&#34;: namespace, **kwargs}
+        response = requests.patch(url, params=params, headers=self._api_headers())
+        self._check_response(response)
 
     def transform(self, name, namespace=None, from_features=[]):
         pass
@@ -269,7 +535,8 @@ Run this to free up disk space after deleting features</p>
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">def clean_namespace(self, name):
-    pass</code></pre>
+    # TODO: Clean namespace
+    raise NotImplementedError()</code></pre>
 </details>
 </dd>
 <dt id="bytehub.cloud.CloudFeatureStore.clone_feature"><code class="name flex">
@@ -292,7 +559,7 @@ from_namespace, str, optional: namespace of the existing feature</p></div>
         valid=[&#34;from_namespace&#34;, &#34;from_name&#34;],
         mandatory=[&#34;from_name&#34;],
     )
-    pass</code></pre>
+    raise NotImplementedError()</code></pre>
 </details>
 </dd>
 <dt id="bytehub.cloud.CloudFeatureStore.create_feature"><code class="name flex">
@@ -323,7 +590,10 @@ from_namespace, str, optional: namespace of the existing feature</p></div>
         valid=[&#34;description&#34;, &#34;meta&#34;, &#34;partition&#34;, &#34;serialized&#34;, &#34;transform&#34;],
         mandatory=[],
     )
-    pass</code></pre>
+    url = self._endpoint + &#34;feature&#34;
+    params = {&#34;name&#34;: name, &#34;namespace&#34;: namespace, **kwargs}
+    response = requests.post(url, params=params, headers=self._api_headers())
+    self._check_response(response)</code></pre>
 </details>
 </dd>
 <dt id="bytehub.cloud.CloudFeatureStore.create_namespace"><code class="name flex">
@@ -347,7 +617,12 @@ meta, dict, optional: key/value pairs of metadata</p></div>
         valid=[&#34;description&#34;, &#34;url&#34;, &#34;storage_options&#34;, &#34;meta&#34;],
         mandatory=[&#34;url&#34;],
     )
-    pass</code></pre>
+    url = self._endpoint + &#34;namespace&#34;
+    params = {&#34;name&#34;: name, **kwargs}
+    response = requests.post(url, params=params, headers=self._api_headers())
+    self._check_response(response)
+    # Call list_namespaces to refresh namespace cache
+    self.list_namespaces()</code></pre>
 </details>
 </dd>
 <dt id="bytehub.cloud.CloudFeatureStore.delete_feature"><code class="name flex">
@@ -366,7 +641,14 @@ metadata but leave the stored timeseries values intact</p></div>
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">def delete_feature(self, name, namespace=None, delete_data=False):
-    pass</code></pre>
+    url = self._endpoint + &#34;feature&#34;
+    response = requests.delete(
+        url,
+        params={&#34;name&#34;: name, &#34;namespace&#34;: namespace},
+        headers=self._api_headers(),
+    )
+    self._check_response(response)
+    # TODO: Delete data</code></pre>
 </details>
 </dd>
 <dt id="bytehub.cloud.CloudFeatureStore.delete_namespace"><code class="name flex">
@@ -388,7 +670,13 @@ metadata but leave the stored timeseries values intact</p></div>
         raise RuntimeError(
             f&#34;{name} still contains features: these must be deleted first&#34;
         )
-    pass</code></pre>
+    url = self._endpoint + &#34;namespace&#34;
+    response = requests.delete(
+        url, params={&#34;name&#34;: name}, headers=self._api_headers()
+    )
+    self._check_response(response)
+    # Call list_namespaces to refresh namespace cache
+    self.list_namespaces()</code></pre>
 </details>
 </dd>
 <dt id="bytehub.cloud.CloudFeatureStore.last"><code class="name flex">
@@ -432,7 +720,11 @@ regex, str, optional: regex filter on name.</p>
 </summary>
 <pre><code class="python">def list_features(self, **kwargs):
     self.__class__._validate_kwargs(kwargs, valid=[&#34;name&#34;, &#34;namespace&#34;, &#34;regex&#34;])
-    pass</code></pre>
+    url = self._endpoint + &#34;feature&#34;
+    response = requests.get(url, params=kwargs, headers=self._api_headers())
+    self._check_response(response)
+    df = pd.DataFrame(response.json())
+    return df</code></pre>
 </details>
 </dd>
 <dt id="bytehub.cloud.CloudFeatureStore.list_namespaces"><code class="name flex">
@@ -456,7 +748,13 @@ regex, str, optional: regex filter on name.</p>
 </summary>
 <pre><code class="python">def list_namespaces(self, **kwargs):
     self.__class__._validate_kwargs(kwargs, [&#34;name&#34;, &#34;namespace&#34;, &#34;regex&#34;])
-    pass</code></pre>
+    url = self._endpoint + &#34;namespace&#34;
+    response = requests.get(url, params=kwargs, headers=self._api_headers())
+    self._check_response(response)
+    df = pd.DataFrame(response.json())
+    # Cache the namespace for use when loading/saving dataframes
+    self._namespaces = df
+    return df</code></pre>
 </details>
 </dd>
 <dt id="bytehub.cloud.CloudFeatureStore.load_dataframe"><code class="name flex">
@@ -551,7 +849,10 @@ from_features, list[str]: list of features which should be transformed by this o
         kwargs,
         valid=[&#34;description&#34;, &#34;meta&#34;, &#34;transform&#34;],
     )
-    pass</code></pre>
+    url = self._endpoint + &#34;feature&#34;
+    params = {&#34;name&#34;: name, &#34;namespace&#34;: namespace, **kwargs}
+    response = requests.patch(url, params=params, headers=self._api_headers())
+    self._check_response(response)</code></pre>
 </details>
 </dd>
 <dt id="bytehub.cloud.CloudFeatureStore.update_namespace"><code class="name flex">
@@ -573,7 +874,12 @@ meta, dict, optional: updated key/value pairs of metadata</p></div>
         kwargs,
         valid=[&#34;description&#34;, &#34;storage_options&#34;, &#34;meta&#34;],
     )
-    pass</code></pre>
+    url = self._endpoint + &#34;namespace&#34;
+    params = {&#34;name&#34;: name, **kwargs}
+    response = requests.patch(url, params=params, headers=self._api_headers())
+    self._check_response(response)
+    # Call list_namespaces to refresh namespace cache
+    self.list_namespaces()</code></pre>
 </details>
 </dd>
 </dl>

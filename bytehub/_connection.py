@@ -4,8 +4,8 @@ from contextlib import contextmanager
 from pandas.io import json
 
 
-def connect(conn):
-    engine = create_engine(conn, json_serializer=json.dumps)
+def connect(conn, connect_args={}):
+    engine = create_engine(conn, json_serializer=json.dumps, connect_args=connect_args)
     return engine, sessionmaker(bind=engine)
 
 

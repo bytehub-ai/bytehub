@@ -43,16 +43,25 @@ class CoreFeatureStore(BaseFeatureStore):
     Connects directly to a SQLAlchemy-compatible database.
     &#34;&#34;&#34;
 
-    def __init__(self, connection_string=&#34;sqlite:///bytehub.db&#34;, backend=&#34;pandas&#34;):
+    def __init__(
+        self,
+        connection_string=&#34;sqlite:///bytehub.db&#34;,
+        backend=&#34;pandas&#34;,
+        connect_args={},
+    ):
         &#34;&#34;&#34;Create a Feature Store, or connect to an existing one
 
         Args:
             connection_string, str: SQLAlchemy connection string for database
                 containing feature store metadata - defaults to local sqlite file
-            backend, str: eith &#39;pandas&#39; (default) or &#39;dask&#39;, specifying the type
+            backend, str: either &#39;pandas&#39; (default) or &#39;dask&#39;, specifying the type
                 of dataframes returned by load_dataframe
+            connect_args, dict: optional dictionary of connection arguments to pass
+                to SQLAlchemy
         &#34;&#34;&#34;
-        self.engine, self.session_maker = conn.connect(connection_string)
+        self.engine, self.session_maker = conn.connect(
+            connection_string, connect_args=connect_args
+        )
         if backend.lower() not in [&#34;pandas&#34;, &#34;dask&#34;]:
             raise ValueError(&#34;Backend must be either pandas or dask&#34;)
         self.mode = backend.lower()
@@ -361,7 +370,7 @@ class CoreFeatureStore(BaseFeatureStore):
 <dl>
 <dt id="bytehub.core.CoreFeatureStore"><code class="flex name class">
 <span>class <span class="ident">CoreFeatureStore</span></span>
-<span>(</span><span>connection_string='sqlite:///bytehub.db', backend='pandas')</span>
+<span>(</span><span>connection_string='sqlite:///bytehub.db', backend='pandas', connect_args={})</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Core Feature Store
@@ -370,8 +379,10 @@ Connects directly to a SQLAlchemy-compatible database.</p>
 <h2 id="args">Args</h2>
 <p>connection_string, str: SQLAlchemy connection string for database
 containing feature store metadata - defaults to local sqlite file
-backend, str: eith 'pandas' (default) or 'dask', specifying the type
-of dataframes returned by load_dataframe</p></div>
+backend, str: either 'pandas' (default) or 'dask', specifying the type
+of dataframes returned by load_dataframe
+connect_args, dict: optional dictionary of connection arguments to pass
+to SQLAlchemy</p></div>
 <details class="source">
 <summary>
 <span>Expand source code</span>
@@ -381,16 +392,25 @@ of dataframes returned by load_dataframe</p></div>
     Connects directly to a SQLAlchemy-compatible database.
     &#34;&#34;&#34;
 
-    def __init__(self, connection_string=&#34;sqlite:///bytehub.db&#34;, backend=&#34;pandas&#34;):
+    def __init__(
+        self,
+        connection_string=&#34;sqlite:///bytehub.db&#34;,
+        backend=&#34;pandas&#34;,
+        connect_args={},
+    ):
         &#34;&#34;&#34;Create a Feature Store, or connect to an existing one
 
         Args:
             connection_string, str: SQLAlchemy connection string for database
                 containing feature store metadata - defaults to local sqlite file
-            backend, str: eith &#39;pandas&#39; (default) or &#39;dask&#39;, specifying the type
+            backend, str: either &#39;pandas&#39; (default) or &#39;dask&#39;, specifying the type
                 of dataframes returned by load_dataframe
+            connect_args, dict: optional dictionary of connection arguments to pass
+                to SQLAlchemy
         &#34;&#34;&#34;
-        self.engine, self.session_maker = conn.connect(connection_string)
+        self.engine, self.session_maker = conn.connect(
+            connection_string, connect_args=connect_args
+        )
         if backend.lower() not in [&#34;pandas&#34;, &#34;dask&#34;]:
             raise ValueError(&#34;Backend must be either pandas or dask&#34;)
         self.mode = backend.lower()

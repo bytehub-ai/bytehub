@@ -15,16 +15,25 @@ class CoreFeatureStore(BaseFeatureStore):
     Connects directly to a SQLAlchemy-compatible database.
     """
 
-    def __init__(self, connection_string="sqlite:///bytehub.db", backend="pandas"):
+    def __init__(
+        self,
+        connection_string="sqlite:///bytehub.db",
+        backend="pandas",
+        connect_args={},
+    ):
         """Create a Feature Store, or connect to an existing one
 
         Args:
             connection_string, str: SQLAlchemy connection string for database
                 containing feature store metadata - defaults to local sqlite file
-            backend, str: eith 'pandas' (default) or 'dask', specifying the type
+            backend, str: either 'pandas' (default) or 'dask', specifying the type
                 of dataframes returned by load_dataframe
+            connect_args, dict: optional dictionary of connection arguments to pass
+                to SQLAlchemy
         """
-        self.engine, self.session_maker = conn.connect(connection_string)
+        self.engine, self.session_maker = conn.connect(
+            connection_string, connect_args=connect_args
+        )
         if backend.lower() not in ["pandas", "dask"]:
             raise ValueError("Backend must be either pandas or dask")
         self.mode = backend.lower()
