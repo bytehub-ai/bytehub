@@ -26,14 +26,45 @@
 <summary>
 <span>Expand source code</span>
 </summary>
-<pre><code class="python">from .store import FeatureStore
-from ._version import __version__</code></pre>
+<pre><code class="python">from .core import CoreFeatureStore
+from .cloud import CloudFeatureStore
+from ._version import __version__
+
+
+def FeatureStore(connection_string=&#34;sqlite:///bytehub.db&#34;, backend=&#34;pandas&#34;, **kwargs):
+    &#34;&#34;&#34;Factory method to create Feature Store objects.
+
+    Args:
+        connection_string, str: SQLAlchemy connection string for database
+            containing feature store metadata - defaults to local sqlite file
+            or an HTTPS endpoint to a cloud-hosted feature store
+        backend, str: eith &#39;pandas&#39; (default) or &#39;dask&#39;, specifying the type
+            of dataframes returned by load_dataframe
+        **kwargs: Additional options to be passed to the Feature Store constructor
+
+    Returns:
+        CoreFeatureStore or CloudFeatureStore object
+    &#34;&#34;&#34;
+    if connection_string.startswith(&#34;http&#34;):
+        # Connect to cloud-hosted feature store
+        return CloudFeatureStore(
+            connection_string=connection_string, backend=backend, **kwargs
+        )
+    else:
+        # Direct connection to database using CoreFeatureStore
+        return CoreFeatureStore(
+            connection_string=connection_string, backend=backend, **kwargs
+        )</code></pre>
 </details>
 </section>
 <section>
 <h2 class="section-title" id="header-submodules">Sub-modules</h2>
 <dl>
-<dt><code class="name"><a title="bytehub.store" href="store.html">bytehub.store</a></code></dt>
+<dt><code class="name"><a title="bytehub.cloud" href="cloud.html">bytehub.cloud</a></code></dt>
+<dd>
+<div class="desc"></div>
+</dd>
+<dt><code class="name"><a title="bytehub.core" href="core.html">bytehub.core</a></code></dt>
 <dd>
 <div class="desc"></div>
 </dd>
@@ -42,6 +73,56 @@ from ._version import __version__</code></pre>
 <section>
 </section>
 <section>
+<h2 class="section-title" id="header-functions">Functions</h2>
+<dl>
+<dt id="bytehub.FeatureStore"><code class="name flex">
+<span>def <span class="ident">FeatureStore</span></span>(<span>connection_string='sqlite:///bytehub.db', backend='pandas', **kwargs)</span>
+</code></dt>
+<dd>
+<div class="desc"><p>Factory method to create Feature Store objects.</p>
+<h2 id="args">Args</h2>
+<dl>
+<dt>connection_string, str: SQLAlchemy connection string for database</dt>
+<dt>containing feature store metadata - defaults to local sqlite file</dt>
+<dt>or an HTTPS endpoint to a cloud-hosted feature store</dt>
+<dt>backend, str: eith 'pandas' (default) or 'dask', specifying the type</dt>
+<dt>of dataframes returned by load_dataframe</dt>
+<dt><strong><code>**kwargs</code></strong></dt>
+<dd>Additional options to be passed to the Feature Store constructor</dd>
+</dl>
+<h2 id="returns">Returns</h2>
+<p>CoreFeatureStore or CloudFeatureStore object</p></div>
+<details class="source">
+<summary>
+<span>Expand source code</span>
+</summary>
+<pre><code class="python">def FeatureStore(connection_string=&#34;sqlite:///bytehub.db&#34;, backend=&#34;pandas&#34;, **kwargs):
+    &#34;&#34;&#34;Factory method to create Feature Store objects.
+
+    Args:
+        connection_string, str: SQLAlchemy connection string for database
+            containing feature store metadata - defaults to local sqlite file
+            or an HTTPS endpoint to a cloud-hosted feature store
+        backend, str: eith &#39;pandas&#39; (default) or &#39;dask&#39;, specifying the type
+            of dataframes returned by load_dataframe
+        **kwargs: Additional options to be passed to the Feature Store constructor
+
+    Returns:
+        CoreFeatureStore or CloudFeatureStore object
+    &#34;&#34;&#34;
+    if connection_string.startswith(&#34;http&#34;):
+        # Connect to cloud-hosted feature store
+        return CloudFeatureStore(
+            connection_string=connection_string, backend=backend, **kwargs
+        )
+    else:
+        # Direct connection to database using CoreFeatureStore
+        return CoreFeatureStore(
+            connection_string=connection_string, backend=backend, **kwargs
+        )</code></pre>
+</details>
+</dd>
+</dl>
 </section>
 <section>
 </section>
@@ -59,7 +140,13 @@ from ._version import __version__</code></pre>
 <ul id="index">
 <li><h3><a href="#header-submodules">Sub-modules</a></h3>
 <ul>
-<li><code><a title="bytehub.store" href="store.html">bytehub.store</a></code></li>
+<li><code><a title="bytehub.cloud" href="cloud.html">bytehub.cloud</a></code></li>
+<li><code><a title="bytehub.core" href="core.html">bytehub.core</a></code></li>
+</ul>
+</li>
+<li><h3><a href="#header-functions">Functions</a></h3>
+<ul class="">
+<li><code><a title="bytehub.FeatureStore" href="#bytehub.FeatureStore">FeatureStore</a></code></li>
 </ul>
 </li>
 </ul>
