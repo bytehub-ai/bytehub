@@ -5,4 +5,6 @@
 data/*
 dist/*
 build/*
+.ipynb_checkpoints/*
 *.egg-info
+.vscode/*

@@ -6,7 +6,7 @@ import functools
 import json
 from sqlalchemy.sql import text
 from . import _connection as conn
-from . import model
+from . import _model as model
 
 
 class FeatureStore:
@@ -269,6 +269,7 @@ class FeatureStore:
             serialized, bool, optional: if True, converts values to JSON strings before saving,
                 which can help in situations where the format/schema of the data changes
                 over time
+            transform: str, optional: pickled function code for feature transforms
             meta, dict, optional: key/value pairs of metadata
         """
         self.__class__._validate_kwargs(
@@ -335,6 +336,7 @@ class FeatureStore:
             name, str: feature to update
             namespace, str: namespace, if not included in feature name
             description, str, optional: updated description
+            transform: str, optional: pickled function code for feature transforms
             meta, dict, optional: updated key/value pairs of metadata
         """
         self.__class__._validate_kwargs(
@@ -351,7 +353,7 @@ class FeatureStore:
         Args:
             name, str: feature to update
             namespace, str: namespace, if not included in feature name
-            **args: features which should be transformed by this one
+            from_features, list[str]: list of features which should be transformed by this one
         """
 
         def decorator(func):
@@ -394,7 +396,8 @@ class FeatureStore:
             from_date, datetime, optional: start date to load timeseries from, defaults to everything
             to_date, datetime, optional: end date to load timeseries to, defaults to everything
             freq, str, optional: frequency interval at which feature values should be sampled
-            time_travel, optional:
+            time_travel, str, optional: timedelta string, indicating that time-travel should be applied to the
+                returned timeseries values, useful in forecasting applications
 
         Returns:
             pd.DataFrame or dask.DataFrame depending on which backend was specified in the feature store

@@ -22,7 +22,7 @@ setup(
     long_description_content_type="text/markdown",
     install_requires=install_requires,
     extras_require={
-        "dev": ["pytest", "black", "bump2version", "jupyterlab", "pre-commit"],
-        "aws": ["s3fs>=0.5"],
+        "dev": ["pytest", "black", "bump2version", "jupyterlab", "pre-commit", "pdoc3"],
+        "aws": ["s3fs>=0.5.2"],
     },
 )

@@ -15,7 +15,7 @@ import types
 import posixpath
 import fsspec
 import functools
-from . import utils
+from . import _utils as utils
 from . import _connection as conn
 
 
