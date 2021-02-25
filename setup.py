@@ -23,6 +23,6 @@ setup(
     install_requires=install_requires,
     extras_require={
         "dev": ["pytest", "black", "bump2version", "jupyterlab", "pre-commit"],
-        "aws": ["s3fs>=0.5"],
+        "aws": ["s3fs>=0.5.2"],
     },
 )
