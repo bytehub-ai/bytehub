@@ -1,13 +1,17 @@
 import sqlalchemy as sa
 import pandas as pd
-from dask import dataframe as dd
 import posixpath
-import functools
 import json
 from sqlalchemy.sql import text
 from . import _connection as conn
-from . import _model as model
 from ._base import BaseFeatureStore
+from . import _timeseries as ts
+
+try:
+    # Allow for a minimal install with no dask
+    from . import _model as model
+except ImportError:
+    pass
 
 
 class CoreFeatureStore(BaseFeatureStore):
@@ -266,18 +270,7 @@ class CoreFeatureStore(BaseFeatureStore):
                     mode=self.mode,
                 )
                 dfs.append(df.rename(columns={"value": f"{namespace}/{name}"}))
-        if self.mode == "pandas":
-            return pd.concat(dfs, join="outer", axis=1).ffill()
-        elif self.mode == "dask":
-            dfs = functools.reduce(
-                lambda left, right: dd.merge(
-                    left, right, left_index=True, right_index=True, how="outer"
-                ),
-                dfs,
-            )
-            return dfs.ffill()
-        else:
-            raise NotImplementedError(f"{self.mode} has not been implemented")
+        return ts.concat(dfs)
 
     def save_dataframe(self, df, name=None, namespace=None):
         # Check dataframe columns

@@ -28,14 +28,18 @@
 </summary>
 <pre><code class="python">import sqlalchemy as sa
 import pandas as pd
-from dask import dataframe as dd
 import posixpath
-import functools
 import json
 from sqlalchemy.sql import text
 from . import _connection as conn
-from . import _model as model
 from ._base import BaseFeatureStore
+from . import _timeseries as ts
+
+try:
+    # Allow for a minimal install with no dask
+    from . import _model as model
+except ImportError:
+    pass
 
 
 class CoreFeatureStore(BaseFeatureStore):
@@ -294,18 +298,7 @@ class CoreFeatureStore(BaseFeatureStore):
                     mode=self.mode,
                 )
                 dfs.append(df.rename(columns={&#34;value&#34;: f&#34;{namespace}/{name}&#34;}))
-        if self.mode == &#34;pandas&#34;:
-            return pd.concat(dfs, join=&#34;outer&#34;, axis=1).ffill()
-        elif self.mode == &#34;dask&#34;:
-            dfs = functools.reduce(
-                lambda left, right: dd.merge(
-                    left, right, left_index=True, right_index=True, how=&#34;outer&#34;
-                ),
-                dfs,
-            )
-            return dfs.ffill()
-        else:
-            raise NotImplementedError(f&#34;{self.mode} has not been implemented&#34;)
+        return ts.concat(dfs)
 
     def save_dataframe(self, df, name=None, namespace=None):
         # Check dataframe columns
@@ -643,18 +636,7 @@ to SQLAlchemy</p></div>
                     mode=self.mode,
                 )
                 dfs.append(df.rename(columns={&#34;value&#34;: f&#34;{namespace}/{name}&#34;}))
-        if self.mode == &#34;pandas&#34;:
-            return pd.concat(dfs, join=&#34;outer&#34;, axis=1).ffill()
-        elif self.mode == &#34;dask&#34;:
-            dfs = functools.reduce(
-                lambda left, right: dd.merge(
-                    left, right, left_index=True, right_index=True, how=&#34;outer&#34;
-                ),
-                dfs,
-            )
-            return dfs.ffill()
-        else:
-            raise NotImplementedError(f&#34;{self.mode} has not been implemented&#34;)
+        return ts.concat(dfs)
 
     def save_dataframe(self, df, name=None, namespace=None):
         # Check dataframe columns
@@ -1014,18 +996,7 @@ returned timeseries values, useful in forecasting applications</p>
                 mode=self.mode,
             )
             dfs.append(df.rename(columns={&#34;value&#34;: f&#34;{namespace}/{name}&#34;}))
-    if self.mode == &#34;pandas&#34;:
-        return pd.concat(dfs, join=&#34;outer&#34;, axis=1).ffill()
-    elif self.mode == &#34;dask&#34;:
-        dfs = functools.reduce(
-            lambda left, right: dd.merge(
-                left, right, left_index=True, right_index=True, how=&#34;outer&#34;
-            ),
-            dfs,
-        )
-        return dfs.ffill()
-    else:
-        raise NotImplementedError(f&#34;{self.mode} has not been implemented&#34;)</code></pre>
+    return ts.concat(dfs)</code></pre>
 </details>
 </dd>
 <dt id="bytehub.core.CoreFeatureStore.save_dataframe"><code class="name flex">

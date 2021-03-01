@@ -27,14 +27,18 @@
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">import pandas as pd
-from dask import dataframe as dd
 import posixpath
-import requests
 import getpass
-from requests_oauthlib import OAuth2Session
-import functools
 import json
 from ._base import BaseFeatureStore
+from . import _timeseries as ts
+
+try:
+    # Allow for a minimal install with no requests
+    import requests
+    from requests_oauthlib import OAuth2Session
+except ImportError:
+    pass
 
 
 class CloudFeatureStore(BaseFeatureStore):
@@ -48,7 +52,7 @@ class CloudFeatureStore(BaseFeatureStore):
         backend=&#34;pandas&#34;,
         enable_transforms=False,
     ):
-        &#34;&#34;&#34;Create a Feature Store, or connect to an existing one
+        &#34;&#34;&#34;Connect to a cloud-hosted feature store
 
         Args:
             connection_string, str: URL of ByteHub Cloud, e.g. https://api.bytehub.ai
@@ -57,6 +61,9 @@ class CloudFeatureStore(BaseFeatureStore):
             enable_transforms, bool: whether to allow execution of pickled functions
                 stored in the feature store - only enable if you trust the store
         &#34;&#34;&#34;
+        if backend.lower() not in [&#34;pandas&#34;, &#34;dask&#34;]:
+            raise ValueError(&#34;Backend must be either pandas or dask&#34;)
+        self.mode = backend.lower()
         self._endpoint = connection_string
         if &#34;/v1&#34; not in self._endpoint:
             # Add API version
@@ -144,6 +151,31 @@ class CloudFeatureStore(BaseFeatureStore):
                 self.list_namespaces()
                 return
 
+    def _exists(self, entity, **kwargs):
+        if entity.lower() == &#34;feature&#34;:
+            ls = self.list_features(
+                namespace=kwargs.get(&#34;namespace&#34;), name=kwargs.get(&#34;name&#34;)
+            )
+        elif entity.lower() == &#34;namespace&#34;:
+            ls = self.list_namespaces(name=kwargs.get(&#34;name&#34;, kwargs.get(&#34;namespace&#34;)))
+        else:
+            raise ValueError(f&#34;Unrecognised entity: {entity}&#34;)
+        return not ls.empty
+
+    def _get(self, entity, **kwargs):
+        if entity.lower() == &#34;feature&#34;:
+            ls = self.list_features(
+                namespace=kwargs.get(&#34;namespace&#34;), name=kwargs.get(&#34;name&#34;)
+            )
+        elif entity.lower() == &#34;namespace&#34;:
+            self._refresh(name=kwargs.get(&#34;name&#34;, kwargs.get(&#34;namespace&#34;)))
+            ls = self._namespaces[name == kwargs.get(&#34;name&#34;, kwargs.get(&#34;namespace&#34;))]
+        else:
+            raise ValueError(f&#34;Unrecognised entity: {entity}&#34;)
+        if len(ls) != 1:
+            raise ValueError(f&#34;{entity} not found: {kwargs}&#34;)
+        return ls.iloc[0].to_dict()
+
     def list_namespaces(self, **kwargs):
         self.__class__._validate_kwargs(kwargs, [&#34;name&#34;, &#34;namespace&#34;, &#34;regex&#34;])
         url = self._endpoint + &#34;namespace&#34;
@@ -193,8 +225,18 @@ class CloudFeatureStore(BaseFeatureStore):
         self.list_namespaces()
 
     def clean_namespace(self, name):
-        # TODO: Clean namespace
-        raise NotImplementedError()
+        # Get namespace
+        self._refresh(name=name)
+        ns = self._get(&#34;namespace&#34;, name=name)
+        # Check for unused data and remove it
+        feature_paths = fs.ls(posixpath.join(paths[0], &#34;feature&#34;))
+        active_feature_names = self.list_features(namespace=name)
+        active_feature_names = active_feature_names.name.tolist()
+        feature_data = [f.split(&#34;/&#34;)[-1] for f in feature_paths]
+        for feature in feature_data:
+            if feature not in active_feature_names:
+                # Redundant data... delete it
+                ts.delete(feature, ns[&#34;url&#34;], storage_options=ns[&#34;storage_options&#34;])
 
     def list_features(self, **kwargs):
         self.__class__._validate_kwargs(kwargs, valid=[&#34;name&#34;, &#34;namespace&#34;, &#34;regex&#34;])
@@ -221,7 +263,42 @@ class CloudFeatureStore(BaseFeatureStore):
             valid=[&#34;from_namespace&#34;, &#34;from_name&#34;],
             mandatory=[&#34;from_name&#34;],
         )
-        raise NotImplementedError()
+        from_namespace, from_name = self.__class__._split_name(
+            kwargs.get(&#34;from_namespace&#34;), kwargs.get(&#34;from_name&#34;)
+        )
+        to_namespace, to_name = self.__class__._split_name(namespace, name)
+        if not self._exists(&#34;namespace&#34;, namespace=from_namespace):
+            raise ValueError(f&#34;{from_namespace} namespace does not exist&#34;)
+        if not self._exists(&#34;namespace&#34;, namespace=to_namespace):
+            raise ValueError(f&#34;{to_namespace} namespace does not exist&#34;)
+        # Get the existing feature
+        payload = self._get(&#34;feature&#34;, namespace=from_namespace, name=from_name)
+        _ = payload.pop(&#34;name&#34;)
+        _ = payload.pop(&#34;namespace&#34;)
+        # Create the new feature
+        self.create_feature(
+            name=to_name,
+            namespace=to_namespace,
+            **payload,
+        )
+        # Copy data to new feature, if this raises exception will rollback
+        if not payload.transform:
+            # Get location of this feature to copy to
+            from_ns = self._get(&#34;namespace&#34;, name=from_namespace)
+            to_ns = self._get(&#34;namespace&#34;, name=to_namespace)
+            try:
+                ts.copy(
+                    from_name,
+                    from_ns[&#34;url&#34;],
+                    from_ns[&#34;storage_options&#34;],
+                    to_name,
+                    to_ns[&#34;url&#34;],
+                    to_ns[&#34;storage_options&#34;],
+                )
+            except Exception as e:
+                # Rollback... delete the newly created feature
+                self.delete_feature(name=from_name, namespace=from_namespace)
+                raise RuntimeError(f&#34;Unable to save data to {path}: {str(e)}&#34;)
 
     def delete_feature(self, name, namespace=None, delete_data=False):
         url = self._endpoint + &#34;feature&#34;
@@ -231,7 +308,11 @@ class CloudFeatureStore(BaseFeatureStore):
             headers=self._api_headers(),
         )
         self._check_response(response)
-        # TODO: Delete data
+        # Delete data
+        if delete_data:
+            namespace, name = self.__class__._split_name(namespace, name)
+            ns = self._get(&#34;namespace&#34;, name=namespace)
+            ts.delete(name, ns[&#34;url&#34;], storage_options=ns[&#34;storage_options&#34;])
 
     def update_feature(self, name, namespace=None, **kwargs):
         self.__class__._validate_kwargs(
@@ -244,7 +325,83 @@ class CloudFeatureStore(BaseFeatureStore):
         self._check_response(response)
 
     def transform(self, name, namespace=None, from_features=[]):
-        pass
+        def decorator(func):
+            # Create or update feature with transform
+            to_namespace, to_name = self._split_name(namespace=namespace, name=name)
+            computed_from = [f&#34;{ns}/{n}&#34; for ns, n in self._unpack_list(from_features)]
+            existing_features = self.list_features()
+            existing_features = existing_features.apply(
+                lambda x: x[&#34;namespace&#34;] + &#34;/&#34; + x[&#34;name&#34;], axis=1
+            ).tolist()
+            for feature in computed_from:
+                assert (
+                    feature in existing_features
+                ), f&#34;{feature} does not exist in the feature store&#34;
+
+            transform = {&#34;function&#34;: func, &#34;args&#34;: computed_from}
+            payload = {&#34;transform&#34;: transform, &#34;description&#34;: func.__doc__}
+            if self._exists(&#34;feature&#34;, namespace=to_namespace, name=to_name):
+                # Already exists, update it
+                self.update_feature(to_name, namespace=to_namespace, **payload)
+            else:
+                # Create a new feature
+                self.create_feature(to_name, namespace=to_namespace, **payload)
+            # Call the transform
+            def wrapped_func(*args, **kwargs):
+                return func(*args, **kwargs)
+
+            return wrapped_func
+
+        return decorator
+
+    def _load_transform(
+        self, feature, from_date, to_date, freq, time_travel, callers=[]
+    ):
+        # Check for recursive transforms
+        full_name = feature[&#34;namespace&#34;] + &#34;/&#34; + feature[&#34;name&#34;]
+        if full_name in callers:
+            raise RuntimeError(f&#34;Recursive feature transform detected on {full_name}&#34;)
+        # Load the transform function
+        func = utils.deserialize(feature[&#34;transform&#34;][&#34;function&#34;])
+        # Load the features to transform
+        dfs = []
+        # Load each requested feature
+        for f in feature[&#34;transform&#34;][&#34;args&#34;]:
+            namespace, name = f.split(&#34;/&#34;)[0], &#34;/&#34;.join(f.split(&#34;/&#34;)[1:])
+            f = self._get(&#34;feature&#34;, namespace=namespace, name=name)
+            ns = self._get(&#34;namespace&#34;, name=namespace)
+            # Load individual feature
+            df = self._load(
+                f, from_date, to_date, freq, time_travel, callers=[*callers, full_name]
+            )
+            dfs.append(df.rename(columns={&#34;value&#34;: f&#34;{namespace}/{name}&#34;}))
+        # Merge features into a single dataframe
+        dfs = ts.concat(dfs)
+        # Make sure columns are in the same order as args
+        dfs = dfs[self.transform[&#34;args&#34;]]
+        # Apply transform function
+        transformed = ts.transform(dfs, func, mode)
+        return transformed
+
+    def _load(self, feature, from_date, to_date, freq, time_travel, callers=[]):
+        if feature[&#34;transform&#34;]:
+            # Apply feature transform
+            return self._load_transform(
+                feature, from_date, to_date, freq, time_travel, callers=[]
+            )
+        else:
+            ns = self._get(&#34;namespace&#34;, name=namespace)
+            return ts.load(
+                feature[&#34;name&#34;],
+                ns[&#34;url&#34;],
+                ns[&#34;storage_options&#34;],
+                from_date,
+                to_date,
+                freq,
+                time_travel,
+                self.mode,
+                feature[&#34;serialized&#34;],
+            )
 
     def load_dataframe(
         self,
@@ -254,10 +411,51 @@ class CloudFeatureStore(BaseFeatureStore):
         freq=None,
         time_travel=None,
     ):
-        pass
+        dfs = []
+        # Load each requested feature
+        for f in self._unpack_list(features):
+            namespace, name = f
+            feature = self._get(&#34;feature&#34;, name=name, namespace=namespace)
+            df = self._load(feature, from_date, to_date, freq, time_travel)
+            dfs.append(df.rename(columns={&#34;value&#34;: f&#34;{namespace}/{name}&#34;}))
+        return ts.concat(dfs)
 
     def save_dataframe(self, df, name=None, namespace=None):
-        pass
+        # Check dataframe columns
+        feature_columns = df.columns.difference([&#34;time&#34;, &#34;created_time&#34;])
+        if len(feature_columns) == 1:
+            # Single feature to save
+            if feature_columns[0] == &#34;value&#34;:
+                if not name:
+                    raise ValueError(&#34;Must specify feature name&#34;)
+            else:
+                name = feature_columns[0]
+                df = df.rename(columns={name: &#34;value&#34;})
+            feature = self._get(&#34;feature&#34;, namespace=namespace, name=name)
+            # Save data for this feature
+            namespace, name = self.__class__._split_name(namespace, name)
+            ns = self._get(&#34;namespace&#34;, name=namespace)
+            # Save individual feature
+            ts.save(
+                df,
+                name,
+                ns[&#34;url&#34;],
+                ns[&#34;storage_options&#34;],
+                partition=feature[&#34;partition&#34;],
+                serialized=feature[&#34;serialized&#34;],
+            )
+        else:
+            # Multiple features in column names
+            for feature_name in feature_columns:
+                namespace, name = self.__class__._split_name(namespace, feature_name)
+                if not self._exists(&#34;feature&#34;, namespace=namespace, name=name):
+                    raise ValueError(
+                        f&#34;Feature named {name} does not exist in {namespace}&#34;
+                    )
+            for feature_name in feature_columns:
+                # Save individual features
+                feature_df = df[[*df.columns.difference(feature_columns), feature_name]]
+                self.save_dataframe(feature_df)
 
     def last(self, features):
         pass</code></pre>
@@ -279,7 +477,7 @@ class CloudFeatureStore(BaseFeatureStore):
 <dd>
 <div class="desc"><p>Cloud Feature Store
 Connects to a hosted feature store via REST API.</p>
-<p>Create a Feature Store, or connect to an existing one</p>
+<p>Connect to a cloud-hosted feature store</p>
 <h2 id="args">Args</h2>
 <p>connection_string, str: URL of ByteHub Cloud, e.g. <a href="https://api.bytehub.ai">https://api.bytehub.ai</a>
 backend, str: either 'pandas' (default) or 'dask', specifying the type
@@ -301,7 +499,7 @@ stored in the feature store - only enable if you trust the store</p></div>
         backend=&#34;pandas&#34;,
         enable_transforms=False,
     ):
-        &#34;&#34;&#34;Create a Feature Store, or connect to an existing one
+        &#34;&#34;&#34;Connect to a cloud-hosted feature store
 
         Args:
             connection_string, str: URL of ByteHub Cloud, e.g. https://api.bytehub.ai
@@ -310,6 +508,9 @@ stored in the feature store - only enable if you trust the store</p></div>
             enable_transforms, bool: whether to allow execution of pickled functions
                 stored in the feature store - only enable if you trust the store
         &#34;&#34;&#34;
+        if backend.lower() not in [&#34;pandas&#34;, &#34;dask&#34;]:
+            raise ValueError(&#34;Backend must be either pandas or dask&#34;)
+        self.mode = backend.lower()
         self._endpoint = connection_string
         if &#34;/v1&#34; not in self._endpoint:
             # Add API version
@@ -397,6 +598,31 @@ stored in the feature store - only enable if you trust the store</p></div>
                 self.list_namespaces()
                 return
 
+    def _exists(self, entity, **kwargs):
+        if entity.lower() == &#34;feature&#34;:
+            ls = self.list_features(
+                namespace=kwargs.get(&#34;namespace&#34;), name=kwargs.get(&#34;name&#34;)
+            )
+        elif entity.lower() == &#34;namespace&#34;:
+            ls = self.list_namespaces(name=kwargs.get(&#34;name&#34;, kwargs.get(&#34;namespace&#34;)))
+        else:
+            raise ValueError(f&#34;Unrecognised entity: {entity}&#34;)
+        return not ls.empty
+
+    def _get(self, entity, **kwargs):
+        if entity.lower() == &#34;feature&#34;:
+            ls = self.list_features(
+                namespace=kwargs.get(&#34;namespace&#34;), name=kwargs.get(&#34;name&#34;)
+            )
+        elif entity.lower() == &#34;namespace&#34;:
+            self._refresh(name=kwargs.get(&#34;name&#34;, kwargs.get(&#34;namespace&#34;)))
+            ls = self._namespaces[name == kwargs.get(&#34;name&#34;, kwargs.get(&#34;namespace&#34;))]
+        else:
+            raise ValueError(f&#34;Unrecognised entity: {entity}&#34;)
+        if len(ls) != 1:
+            raise ValueError(f&#34;{entity} not found: {kwargs}&#34;)
+        return ls.iloc[0].to_dict()
+
     def list_namespaces(self, **kwargs):
         self.__class__._validate_kwargs(kwargs, [&#34;name&#34;, &#34;namespace&#34;, &#34;regex&#34;])
         url = self._endpoint + &#34;namespace&#34;
@@ -446,8 +672,18 @@ stored in the feature store - only enable if you trust the store</p></div>
         self.list_namespaces()
 
     def clean_namespace(self, name):
-        # TODO: Clean namespace
-        raise NotImplementedError()
+        # Get namespace
+        self._refresh(name=name)
+        ns = self._get(&#34;namespace&#34;, name=name)
+        # Check for unused data and remove it
+        feature_paths = fs.ls(posixpath.join(paths[0], &#34;feature&#34;))
+        active_feature_names = self.list_features(namespace=name)
+        active_feature_names = active_feature_names.name.tolist()
+        feature_data = [f.split(&#34;/&#34;)[-1] for f in feature_paths]
+        for feature in feature_data:
+            if feature not in active_feature_names:
+                # Redundant data... delete it
+                ts.delete(feature, ns[&#34;url&#34;], storage_options=ns[&#34;storage_options&#34;])
 
     def list_features(self, **kwargs):
         self.__class__._validate_kwargs(kwargs, valid=[&#34;name&#34;, &#34;namespace&#34;, &#34;regex&#34;])
@@ -474,7 +710,42 @@ stored in the feature store - only enable if you trust the store</p></div>
             valid=[&#34;from_namespace&#34;, &#34;from_name&#34;],
             mandatory=[&#34;from_name&#34;],
         )
-        raise NotImplementedError()
+        from_namespace, from_name = self.__class__._split_name(
+            kwargs.get(&#34;from_namespace&#34;), kwargs.get(&#34;from_name&#34;)
+        )
+        to_namespace, to_name = self.__class__._split_name(namespace, name)
+        if not self._exists(&#34;namespace&#34;, namespace=from_namespace):
+            raise ValueError(f&#34;{from_namespace} namespace does not exist&#34;)
+        if not self._exists(&#34;namespace&#34;, namespace=to_namespace):
+            raise ValueError(f&#34;{to_namespace} namespace does not exist&#34;)
+        # Get the existing feature
+        payload = self._get(&#34;feature&#34;, namespace=from_namespace, name=from_name)
+        _ = payload.pop(&#34;name&#34;)
+        _ = payload.pop(&#34;namespace&#34;)
+        # Create the new feature
+        self.create_feature(
+            name=to_name,
+            namespace=to_namespace,
+            **payload,
+        )
+        # Copy data to new feature, if this raises exception will rollback
+        if not payload.transform:
+            # Get location of this feature to copy to
+            from_ns = self._get(&#34;namespace&#34;, name=from_namespace)
+            to_ns = self._get(&#34;namespace&#34;, name=to_namespace)
+            try:
+                ts.copy(
+                    from_name,
+                    from_ns[&#34;url&#34;],
+                    from_ns[&#34;storage_options&#34;],
+                    to_name,
+                    to_ns[&#34;url&#34;],
+                    to_ns[&#34;storage_options&#34;],
+                )
+            except Exception as e:
+                # Rollback... delete the newly created feature
+                self.delete_feature(name=from_name, namespace=from_namespace)
+                raise RuntimeError(f&#34;Unable to save data to {path}: {str(e)}&#34;)
 
     def delete_feature(self, name, namespace=None, delete_data=False):
         url = self._endpoint + &#34;feature&#34;
@@ -484,7 +755,11 @@ stored in the feature store - only enable if you trust the store</p></div>
             headers=self._api_headers(),
         )
         self._check_response(response)
-        # TODO: Delete data
+        # Delete data
+        if delete_data:
+            namespace, name = self.__class__._split_name(namespace, name)
+            ns = self._get(&#34;namespace&#34;, name=namespace)
+            ts.delete(name, ns[&#34;url&#34;], storage_options=ns[&#34;storage_options&#34;])
 
     def update_feature(self, name, namespace=None, **kwargs):
         self.__class__._validate_kwargs(
@@ -497,7 +772,83 @@ stored in the feature store - only enable if you trust the store</p></div>
         self._check_response(response)
 
     def transform(self, name, namespace=None, from_features=[]):
-        pass
+        def decorator(func):
+            # Create or update feature with transform
+            to_namespace, to_name = self._split_name(namespace=namespace, name=name)
+            computed_from = [f&#34;{ns}/{n}&#34; for ns, n in self._unpack_list(from_features)]
+            existing_features = self.list_features()
+            existing_features = existing_features.apply(
+                lambda x: x[&#34;namespace&#34;] + &#34;/&#34; + x[&#34;name&#34;], axis=1
+            ).tolist()
+            for feature in computed_from:
+                assert (
+                    feature in existing_features
+                ), f&#34;{feature} does not exist in the feature store&#34;
+
+            transform = {&#34;function&#34;: func, &#34;args&#34;: computed_from}
+            payload = {&#34;transform&#34;: transform, &#34;description&#34;: func.__doc__}
+            if self._exists(&#34;feature&#34;, namespace=to_namespace, name=to_name):
+                # Already exists, update it
+                self.update_feature(to_name, namespace=to_namespace, **payload)
+            else:
+                # Create a new feature
+                self.create_feature(to_name, namespace=to_namespace, **payload)
+            # Call the transform
+            def wrapped_func(*args, **kwargs):
+                return func(*args, **kwargs)
+
+            return wrapped_func
+
+        return decorator
+
+    def _load_transform(
+        self, feature, from_date, to_date, freq, time_travel, callers=[]
+    ):
+        # Check for recursive transforms
+        full_name = feature[&#34;namespace&#34;] + &#34;/&#34; + feature[&#34;name&#34;]
+        if full_name in callers:
+            raise RuntimeError(f&#34;Recursive feature transform detected on {full_name}&#34;)
+        # Load the transform function
+        func = utils.deserialize(feature[&#34;transform&#34;][&#34;function&#34;])
+        # Load the features to transform
+        dfs = []
+        # Load each requested feature
+        for f in feature[&#34;transform&#34;][&#34;args&#34;]:
+            namespace, name = f.split(&#34;/&#34;)[0], &#34;/&#34;.join(f.split(&#34;/&#34;)[1:])
+            f = self._get(&#34;feature&#34;, namespace=namespace, name=name)
+            ns = self._get(&#34;namespace&#34;, name=namespace)
+            # Load individual feature
+            df = self._load(
+                f, from_date, to_date, freq, time_travel, callers=[*callers, full_name]
+            )
+            dfs.append(df.rename(columns={&#34;value&#34;: f&#34;{namespace}/{name}&#34;}))
+        # Merge features into a single dataframe
+        dfs = ts.concat(dfs)
+        # Make sure columns are in the same order as args
+        dfs = dfs[self.transform[&#34;args&#34;]]
+        # Apply transform function
+        transformed = ts.transform(dfs, func, mode)
+        return transformed
+
+    def _load(self, feature, from_date, to_date, freq, time_travel, callers=[]):
+        if feature[&#34;transform&#34;]:
+            # Apply feature transform
+            return self._load_transform(
+                feature, from_date, to_date, freq, time_travel, callers=[]
+            )
+        else:
+            ns = self._get(&#34;namespace&#34;, name=namespace)
+            return ts.load(
+                feature[&#34;name&#34;],
+                ns[&#34;url&#34;],
+                ns[&#34;storage_options&#34;],
+                from_date,
+                to_date,
+                freq,
+                time_travel,
+                self.mode,
+                feature[&#34;serialized&#34;],
+            )
 
     def load_dataframe(
         self,
@@ -507,10 +858,51 @@ stored in the feature store - only enable if you trust the store</p></div>
         freq=None,
         time_travel=None,
     ):
-        pass
+        dfs = []
+        # Load each requested feature
+        for f in self._unpack_list(features):
+            namespace, name = f
+            feature = self._get(&#34;feature&#34;, name=name, namespace=namespace)
+            df = self._load(feature, from_date, to_date, freq, time_travel)
+            dfs.append(df.rename(columns={&#34;value&#34;: f&#34;{namespace}/{name}&#34;}))
+        return ts.concat(dfs)
 
     def save_dataframe(self, df, name=None, namespace=None):
-        pass
+        # Check dataframe columns
+        feature_columns = df.columns.difference([&#34;time&#34;, &#34;created_time&#34;])
+        if len(feature_columns) == 1:
+            # Single feature to save
+            if feature_columns[0] == &#34;value&#34;:
+                if not name:
+                    raise ValueError(&#34;Must specify feature name&#34;)
+            else:
+                name = feature_columns[0]
+                df = df.rename(columns={name: &#34;value&#34;})
+            feature = self._get(&#34;feature&#34;, namespace=namespace, name=name)
+            # Save data for this feature
+            namespace, name = self.__class__._split_name(namespace, name)
+            ns = self._get(&#34;namespace&#34;, name=namespace)
+            # Save individual feature
+            ts.save(
+                df,
+                name,
+                ns[&#34;url&#34;],
+                ns[&#34;storage_options&#34;],
+                partition=feature[&#34;partition&#34;],
+                serialized=feature[&#34;serialized&#34;],
+            )
+        else:
+            # Multiple features in column names
+            for feature_name in feature_columns:
+                namespace, name = self.__class__._split_name(namespace, feature_name)
+                if not self._exists(&#34;feature&#34;, namespace=namespace, name=name):
+                    raise ValueError(
+                        f&#34;Feature named {name} does not exist in {namespace}&#34;
+                    )
+            for feature_name in feature_columns:
+                # Save individual features
+                feature_df = df[[*df.columns.difference(feature_columns), feature_name]]
+                self.save_dataframe(feature_df)
 
     def last(self, features):
         pass</code></pre>
@@ -535,8 +927,18 @@ Run this to free up disk space after deleting features</p>
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">def clean_namespace(self, name):
-    # TODO: Clean namespace
-    raise NotImplementedError()</code></pre>
+    # Get namespace
+    self._refresh(name=name)
+    ns = self._get(&#34;namespace&#34;, name=name)
+    # Check for unused data and remove it
+    feature_paths = fs.ls(posixpath.join(paths[0], &#34;feature&#34;))
+    active_feature_names = self.list_features(namespace=name)
+    active_feature_names = active_feature_names.name.tolist()
+    feature_data = [f.split(&#34;/&#34;)[-1] for f in feature_paths]
+    for feature in feature_data:
+        if feature not in active_feature_names:
+            # Redundant data... delete it
+            ts.delete(feature, ns[&#34;url&#34;], storage_options=ns[&#34;storage_options&#34;])</code></pre>
 </details>
 </dd>
 <dt id="bytehub.cloud.CloudFeatureStore.clone_feature"><code class="name flex">
@@ -559,7 +961,42 @@ from_namespace, str, optional: namespace of the existing feature</p></div>
         valid=[&#34;from_namespace&#34;, &#34;from_name&#34;],
         mandatory=[&#34;from_name&#34;],
     )
-    raise NotImplementedError()</code></pre>
+    from_namespace, from_name = self.__class__._split_name(
+        kwargs.get(&#34;from_namespace&#34;), kwargs.get(&#34;from_name&#34;)
+    )
+    to_namespace, to_name = self.__class__._split_name(namespace, name)
+    if not self._exists(&#34;namespace&#34;, namespace=from_namespace):
+        raise ValueError(f&#34;{from_namespace} namespace does not exist&#34;)
+    if not self._exists(&#34;namespace&#34;, namespace=to_namespace):
+        raise ValueError(f&#34;{to_namespace} namespace does not exist&#34;)
+    # Get the existing feature
+    payload = self._get(&#34;feature&#34;, namespace=from_namespace, name=from_name)
+    _ = payload.pop(&#34;name&#34;)
+    _ = payload.pop(&#34;namespace&#34;)
+    # Create the new feature
+    self.create_feature(
+        name=to_name,
+        namespace=to_namespace,
+        **payload,
+    )
+    # Copy data to new feature, if this raises exception will rollback
+    if not payload.transform:
+        # Get location of this feature to copy to
+        from_ns = self._get(&#34;namespace&#34;, name=from_namespace)
+        to_ns = self._get(&#34;namespace&#34;, name=to_namespace)
+        try:
+            ts.copy(
+                from_name,
+                from_ns[&#34;url&#34;],
+                from_ns[&#34;storage_options&#34;],
+                to_name,
+                to_ns[&#34;url&#34;],
+                to_ns[&#34;storage_options&#34;],
+            )
+        except Exception as e:
+            # Rollback... delete the newly created feature
+            self.delete_feature(name=from_name, namespace=from_namespace)
+            raise RuntimeError(f&#34;Unable to save data to {path}: {str(e)}&#34;)</code></pre>
 </details>
 </dd>
 <dt id="bytehub.cloud.CloudFeatureStore.create_feature"><code class="name flex">
@@ -648,7 +1085,11 @@ metadata but leave the stored timeseries values intact</p></div>
         headers=self._api_headers(),
     )
     self._check_response(response)
-    # TODO: Delete data</code></pre>
+    # Delete data
+    if delete_data:
+        namespace, name = self.__class__._split_name(namespace, name)
+        ns = self._get(&#34;namespace&#34;, name=namespace)
+        ts.delete(name, ns[&#34;url&#34;], storage_options=ns[&#34;storage_options&#34;])</code></pre>
 </details>
 </dd>
 <dt id="bytehub.cloud.CloudFeatureStore.delete_namespace"><code class="name flex">
@@ -783,7 +1224,14 @@ returned timeseries values, useful in forecasting applications</p>
     freq=None,
     time_travel=None,
 ):
-    pass</code></pre>
+    dfs = []
+    # Load each requested feature
+    for f in self._unpack_list(features):
+        namespace, name = f
+        feature = self._get(&#34;feature&#34;, name=name, namespace=namespace)
+        df = self._load(feature, from_date, to_date, freq, time_travel)
+        dfs.append(df.rename(columns={&#34;value&#34;: f&#34;{namespace}/{name}&#34;}))
+    return ts.concat(dfs)</code></pre>
 </details>
 </dd>
 <dt id="bytehub.cloud.CloudFeatureStore.save_dataframe"><code class="name flex">
@@ -804,7 +1252,41 @@ namespace, str, optional: Namespace, if not included in DataFrame column name</p
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">def save_dataframe(self, df, name=None, namespace=None):
-    pass</code></pre>
+    # Check dataframe columns
+    feature_columns = df.columns.difference([&#34;time&#34;, &#34;created_time&#34;])
+    if len(feature_columns) == 1:
+        # Single feature to save
+        if feature_columns[0] == &#34;value&#34;:
+            if not name:
+                raise ValueError(&#34;Must specify feature name&#34;)
+        else:
+            name = feature_columns[0]
+            df = df.rename(columns={name: &#34;value&#34;})
+        feature = self._get(&#34;feature&#34;, namespace=namespace, name=name)
+        # Save data for this feature
+        namespace, name = self.__class__._split_name(namespace, name)
+        ns = self._get(&#34;namespace&#34;, name=namespace)
+        # Save individual feature
+        ts.save(
+            df,
+            name,
+            ns[&#34;url&#34;],
+            ns[&#34;storage_options&#34;],
+            partition=feature[&#34;partition&#34;],
+            serialized=feature[&#34;serialized&#34;],
+        )
+    else:
+        # Multiple features in column names
+        for feature_name in feature_columns:
+            namespace, name = self.__class__._split_name(namespace, feature_name)
+            if not self._exists(&#34;feature&#34;, namespace=namespace, name=name):
+                raise ValueError(
+                    f&#34;Feature named {name} does not exist in {namespace}&#34;
+                )
+        for feature_name in feature_columns:
+            # Save individual features
+            feature_df = df[[*df.columns.difference(feature_columns), feature_name]]
+            self.save_dataframe(feature_df)</code></pre>
 </details>
 </dd>
 <dt id="bytehub.cloud.CloudFeatureStore.transform"><code class="name flex">
@@ -823,7 +1305,34 @@ from_features, list[str]: list of features which should be transformed by this o
 <span>Expand source code</span>
 </summary>
 <pre><code class="python">def transform(self, name, namespace=None, from_features=[]):
-    pass</code></pre>
+    def decorator(func):
+        # Create or update feature with transform
+        to_namespace, to_name = self._split_name(namespace=namespace, name=name)
+        computed_from = [f&#34;{ns}/{n}&#34; for ns, n in self._unpack_list(from_features)]
+        existing_features = self.list_features()
+        existing_features = existing_features.apply(
+            lambda x: x[&#34;namespace&#34;] + &#34;/&#34; + x[&#34;name&#34;], axis=1
+        ).tolist()
+        for feature in computed_from:
+            assert (
+                feature in existing_features
+            ), f&#34;{feature} does not exist in the feature store&#34;
+
+        transform = {&#34;function&#34;: func, &#34;args&#34;: computed_from}
+        payload = {&#34;transform&#34;: transform, &#34;description&#34;: func.__doc__}
+        if self._exists(&#34;feature&#34;, namespace=to_namespace, name=to_name):
+            # Already exists, update it
+            self.update_feature(to_name, namespace=to_namespace, **payload)
+        else:
+            # Create a new feature
+            self.create_feature(to_name, namespace=to_namespace, **payload)
+        # Call the transform
+        def wrapped_func(*args, **kwargs):
+            return func(*args, **kwargs)
+
+        return wrapped_func
+
+    return decorator</code></pre>
 </details>
 </dd>
 <dt id="bytehub.cloud.CloudFeatureStore.update_feature"><code class="name flex">
