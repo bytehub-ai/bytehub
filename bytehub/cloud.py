@@ -1,6 +1,8 @@
 import pandas as pd
 import posixpath
-import getpass
+from getpass import getpass
+import time
+import os
 import json
 from ._base import BaseFeatureStore
 from . import _timeseries as ts
@@ -43,7 +45,7 @@ class CloudFeatureStore(BaseFeatureStore):
         if self._endpoint[-1] != "/":
             self._endpoint += "/"
         # Get the Oauth2 URLs
-        response = requests.get(self.endpoint)
+        response = requests.get(self._endpoint)
         self._check_response(response)
         self._urls = response.json()
         self._client_id = self._urls.pop("client_id")
@@ -54,14 +56,16 @@ class CloudFeatureStore(BaseFeatureStore):
                 self.client_id, token={"refresh_token": os.environ.get("BYTEHUB_TOKEN")}
             )
             tokens = oauth.refresh_token(
-                self.urls["token_url"],
+                self._urls["token_url"],
                 client_id=self._client_id,
                 client_secret=None,
                 include_client_id=True,
             )
         else:
             # Use interactive login
-            oauth = OAuth2Session(client_id, redirect_uri=self.urls["callback_url"])
+            oauth = OAuth2Session(
+                self._client_id, redirect_uri=self._urls["callback_url"]
+            )
             authorization_url, state = oauth.authorization_url(self._urls["login_url"])
             print(
                 f"Please go to {authorization_url} and login. Copy the response code and paste below."
@@ -117,8 +121,8 @@ class CloudFeatureStore(BaseFeatureStore):
         for idx, row in df.iterrows():
             # Get storage options
             opt = row["storage_options"]
-            if "expires" in opt and pd.Timestamp(
-                opt["expires"]
+            if "_expires" in opt and pd.Timestamp(
+                opt["_expires"]
             ) < pd.Timestamp.utcnow() + pd.Timedelta("1min"):
                 self.list_namespaces()
                 return
@@ -141,7 +145,9 @@ class CloudFeatureStore(BaseFeatureStore):
             )
         elif entity.lower() == "namespace":
             self._refresh(name=kwargs.get("name", kwargs.get("namespace")))
-            ls = self._namespaces[name == kwargs.get("name", kwargs.get("namespace"))]
+            ls = self._namespaces[
+                self._namespaces.name == kwargs.get("name", kwargs.get("namespace"))
+            ]
         else:
             raise ValueError(f"Unrecognised entity: {entity}")
         if len(ls) != 1:
@@ -165,8 +171,8 @@ class CloudFeatureStore(BaseFeatureStore):
             mandatory=["url"],
         )
         url = self._endpoint + "namespace"
-        params = {"name": name, **kwargs}
-        response = requests.post(url, params=params, headers=self._api_headers())
+        body = {"name": name, **kwargs}
+        response = requests.post(url, json=body, headers=self._api_headers())
         self._check_response(response)
         # Call list_namespaces to refresh namespace cache
         self.list_namespaces()
@@ -177,8 +183,8 @@ class CloudFeatureStore(BaseFeatureStore):
             valid=["description", "storage_options", "meta"],
         )
         url = self._endpoint + "namespace"
-        params = {"name": name, **kwargs}
-        response = requests.patch(url, params=params, headers=self._api_headers())
+        body = {"name": name, **kwargs}
+        response = requests.patch(url, json=body, headers=self._api_headers())
         self._check_response(response)
         # Call list_namespaces to refresh namespace cache
         self.list_namespaces()
@@ -190,7 +196,7 @@ class CloudFeatureStore(BaseFeatureStore):
             )
         url = self._endpoint + "namespace"
         response = requests.delete(
-            url, params={"name": name}, headers=self._api_headers()
+            url, json={"name": name}, headers=self._api_headers()
         )
         self._check_response(response)
         # Call list_namespaces to refresh namespace cache
@@ -201,7 +207,7 @@ class CloudFeatureStore(BaseFeatureStore):
         self._refresh(name=name)
         ns = self._get("namespace", name=name)
         # Check for unused data and remove it
-        feature_paths = fs.ls(posixpath.join(paths[0], "feature"))
+        feature_paths = ts.feature_paths(ns["url"], ns["storage_options"])
         active_feature_names = self.list_features(namespace=name)
         active_feature_names = active_feature_names.name.tolist()
         feature_data = [f.split("/")[-1] for f in feature_paths]
@@ -225,8 +231,8 @@ class CloudFeatureStore(BaseFeatureStore):
             mandatory=[],
         )
         url = self._endpoint + "feature"
-        params = {"name": name, "namespace": namespace, **kwargs}
-        response = requests.post(url, params=params, headers=self._api_headers())
+        body = {"name": name, "namespace": namespace, **kwargs}
+        response = requests.post(url, json=body, headers=self._api_headers())
         self._check_response(response)
 
     def clone_feature(self, name, namespace=None, **kwargs):
@@ -276,7 +282,7 @@ class CloudFeatureStore(BaseFeatureStore):
         url = self._endpoint + "feature"
         response = requests.delete(
             url,
-            params={"name": name, "namespace": namespace},
+            json={"name": name, "namespace": namespace},
             headers=self._api_headers(),
         )
         self._check_response(response)
@@ -292,8 +298,8 @@ class CloudFeatureStore(BaseFeatureStore):
             valid=["description", "meta", "transform"],
         )
         url = self._endpoint + "feature"
-        params = {"name": name, "namespace": namespace, **kwargs}
-        response = requests.patch(url, params=params, headers=self._api_headers())
+        body = {"name": name, "namespace": namespace, **kwargs}
+        response = requests.patch(url, json=body, headers=self._api_headers())
         self._check_response(response)
 
     def transform(self, name, namespace=None, from_features=[]):
@@ -362,7 +368,7 @@ class CloudFeatureStore(BaseFeatureStore):
                 feature, from_date, to_date, freq, time_travel, callers=[]
             )
         else:
-            ns = self._get("namespace", name=namespace)
+            ns = self._get("namespace", name=feature["namespace"])
             return ts.load(
                 feature["name"],
                 ns["url"],

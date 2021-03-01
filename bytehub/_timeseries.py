@@ -13,11 +13,16 @@ except ImportError:
     pass
 
 
+def _clean_dict(d):
+    """Cleans dictionary of extraneous keywords."""
+    return {k: v for k, v in d.items() if not k.startswith("_")}
+
+
 def delete(name, url, storage_options):
     """Delete timeseries data for a feature."""
     fs, fs_token, paths = fsspec.get_fs_token_paths(
         url,
-        storage_options,
+        storage_options=_clean_dict(storage_options),
     )
     feature_path = posixpath.join(paths[0], "feature", name)
     try:
@@ -42,9 +47,14 @@ def load(
     path = posixpath.join(url, "feature", name)
     try:
         ddf = dd.read_parquet(
-            path, engine="pyarrow", filters=filters, storage_options=storage_options
+            path,
+            engine="pyarrow",
+            filters=filters,
+            storage_options=_clean_dict(storage_options),
         )
         ddf = ddf.repartition(npartitions=ddf.npartitions)
+    except PermissionError as e:
+        raise e
     except Exception as e:
         # No data available
         empty_df = pd.DataFrame(
@@ -217,7 +227,7 @@ def save(df, name, url, storage_options, partition="date", serialized=False):
             partition_on="partition",
             ignore_divisions=True,
             schema=schema,
-            storage_options=storage_options,
+            storage_options=_clean_dict(storage_options),
         )
     except Exception as e:
         raise RuntimeError(f"Unable to save data to {path}: {str(e)}")
@@ -231,7 +241,7 @@ def copy(
     path = posixpath.join(from_url, "feature", from_name)
     try:
         ddf = dd.read_parquet(
-            path, engine="pyarrow", storage_options=from_storage_options
+            path, engine="pyarrow", storage_options=_clean_dict(from_storage_options)
         )
         # Repartition to optimise files on new dataset
         ddf = ddf.repartition(partition_size="100MB")
@@ -248,7 +258,7 @@ def copy(
         append=True,
         partition_on="partition",
         ignore_divisions=True,
-        storage_options=to_storage_options,
+        storage_options=_clean_dict(to_storage_options),
     )
 
 
@@ -274,7 +284,7 @@ def feature_paths(url, storage_options):
     """List storage paths for features."""
     fs, fs_token, paths = fsspec.get_fs_token_paths(
         url,
-        storage_options,
+        storage_options=_clean_dict(storage_options),
     )
     feature_paths = fs.ls(posixpath.join(paths[0], "feature"))
     return feature_paths

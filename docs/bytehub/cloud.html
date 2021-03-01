@@ -28,7 +28,9 @@
 </summary>
 <pre><code class="python">import pandas as pd
 import posixpath
-import getpass
+from getpass import getpass
+import time
+import os
 import json
 from ._base import BaseFeatureStore
 from . import _timeseries as ts
@@ -71,7 +73,7 @@ class CloudFeatureStore(BaseFeatureStore):
         if self._endpoint[-1] != &#34;/&#34;:
             self._endpoint += &#34;/&#34;
         # Get the Oauth2 URLs
-        response = requests.get(self.endpoint)
+        response = requests.get(self._endpoint)
         self._check_response(response)
         self._urls = response.json()
         self._client_id = self._urls.pop(&#34;client_id&#34;)
@@ -82,14 +84,16 @@ class CloudFeatureStore(BaseFeatureStore):
                 self.client_id, token={&#34;refresh_token&#34;: os.environ.get(&#34;BYTEHUB_TOKEN&#34;)}
             )
             tokens = oauth.refresh_token(
-                self.urls[&#34;token_url&#34;],
+                self._urls[&#34;token_url&#34;],
                 client_id=self._client_id,
                 client_secret=None,
                 include_client_id=True,
             )
         else:
             # Use interactive login
-            oauth = OAuth2Session(client_id, redirect_uri=self.urls[&#34;callback_url&#34;])
+            oauth = OAuth2Session(
+                self._client_id, redirect_uri=self._urls[&#34;callback_url&#34;]
+            )
             authorization_url, state = oauth.authorization_url(self._urls[&#34;login_url&#34;])
             print(
                 f&#34;Please go to {authorization_url} and login. Copy the response code and paste below.&#34;
@@ -145,8 +149,8 @@ class CloudFeatureStore(BaseFeatureStore):
         for idx, row in df.iterrows():
             # Get storage options
             opt = row[&#34;storage_options&#34;]
-            if &#34;expires&#34; in opt and pd.Timestamp(
-                opt[&#34;expires&#34;]
+            if &#34;_expires&#34; in opt and pd.Timestamp(
+                opt[&#34;_expires&#34;]
             ) &lt; pd.Timestamp.utcnow() + pd.Timedelta(&#34;1min&#34;):
                 self.list_namespaces()
                 return
@@ -169,7 +173,9 @@ class CloudFeatureStore(BaseFeatureStore):
             )
         elif entity.lower() == &#34;namespace&#34;:
             self._refresh(name=kwargs.get(&#34;name&#34;, kwargs.get(&#34;namespace&#34;)))
-            ls = self._namespaces[name == kwargs.get(&#34;name&#34;, kwargs.get(&#34;namespace&#34;))]
+            ls = self._namespaces[
+                self._namespaces.name == kwargs.get(&#34;name&#34;, kwargs.get(&#34;namespace&#34;))
+            ]
         else:
             raise ValueError(f&#34;Unrecognised entity: {entity}&#34;)
         if len(ls) != 1:
@@ -193,8 +199,8 @@ class CloudFeatureStore(BaseFeatureStore):
             mandatory=[&#34;url&#34;],
         )
         url = self._endpoint + &#34;namespace&#34;
-        params = {&#34;name&#34;: name, **kwargs}
-        response = requests.post(url, params=params, headers=self._api_headers())
+        body = {&#34;name&#34;: name, **kwargs}
+        response = requests.post(url, json=body, headers=self._api_headers())
         self._check_response(response)
         # Call list_namespaces to refresh namespace cache
         self.list_namespaces()
@@ -205,8 +211,8 @@ class CloudFeatureStore(BaseFeatureStore):
             valid=[&#34;description&#34;, &#34;storage_options&#34;, &#34;meta&#34;],
         )
         url = self._endpoint + &#34;namespace&#34;
-        params = {&#34;name&#34;: name, **kwargs}
-        response = requests.patch(url, params=params, headers=self._api_headers())
+        body = {&#34;name&#34;: name, **kwargs}
+        response = requests.patch(url, json=body, headers=self._api_headers())
         self._check_response(response)
         # Call list_namespaces to refresh namespace cache
         self.list_namespaces()
@@ -218,7 +224,7 @@ class CloudFeatureStore(BaseFeatureStore):
             )
         url = self._endpoint + &#34;namespace&#34;
         response = requests.delete(
-            url, params={&#34;name&#34;: name}, headers=self._api_headers()
+            url, json={&#34;name&#34;: name}, headers=self._api_headers()
         )
         self._check_response(response)
         # Call list_namespaces to refresh namespace cache
@@ -229,7 +235,7 @@ class CloudFeatureStore(BaseFeatureStore):
         self._refresh(name=name)
         ns = self._get(&#34;namespace&#34;, name=name)
         # Check for unused data and remove it
-        feature_paths = fs.ls(posixpath.join(paths[0], &#34;feature&#34;))
+        feature_paths = ts.feature_paths(ns[&#34;url&#34;], ns[&#34;storage_options&#34;])
         active_feature_names = self.list_features(namespace=name)
         active_feature_names = active_feature_names.name.tolist()
         feature_data = [f.split(&#34;/&#34;)[-1] for f in feature_paths]
@@ -253,8 +259,8 @@ class CloudFeatureStore(BaseFeatureStore):
             mandatory=[],
         )
         url = self._endpoint + &#34;feature&#34;
-        params = {&#34;name&#34;: name, &#34;namespace&#34;: namespace, **kwargs}
-        response = requests.post(url, params=params, headers=self._api_headers())
+        body = {&#34;name&#34;: name, &#34;namespace&#34;: namespace, **kwargs}
+        response = requests.post(url, json=body, headers=self._api_headers())
         self._check_response(response)
 
     def clone_feature(self, name, namespace=None, **kwargs):
@@ -304,7 +310,7 @@ class CloudFeatureStore(BaseFeatureStore):
         url = self._endpoint + &#34;feature&#34;
         response = requests.delete(
             url,
-            params={&#34;name&#34;: name, &#34;namespace&#34;: namespace},
+            json={&#34;name&#34;: name, &#34;namespace&#34;: namespace},
             headers=self._api_headers(),
         )
         self._check_response(response)
@@ -320,8 +326,8 @@ class CloudFeatureStore(BaseFeatureStore):
             valid=[&#34;description&#34;, &#34;meta&#34;, &#34;transform&#34;],
         )
         url = self._endpoint + &#34;feature&#34;
-        params = {&#34;name&#34;: name, &#34;namespace&#34;: namespace, **kwargs}
-        response = requests.patch(url, params=params, headers=self._api_headers())
+        body = {&#34;name&#34;: name, &#34;namespace&#34;: namespace, **kwargs}
+        response = requests.patch(url, json=body, headers=self._api_headers())
         self._check_response(response)
 
     def transform(self, name, namespace=None, from_features=[]):
@@ -390,7 +396,7 @@ class CloudFeatureStore(BaseFeatureStore):
                 feature, from_date, to_date, freq, time_travel, callers=[]
             )
         else:
-            ns = self._get(&#34;namespace&#34;, name=namespace)
+            ns = self._get(&#34;namespace&#34;, name=feature[&#34;namespace&#34;])
             return ts.load(
                 feature[&#34;name&#34;],
                 ns[&#34;url&#34;],
@@ -518,7 +524,7 @@ stored in the feature store - only enable if you trust the store</p></div>
         if self._endpoint[-1] != &#34;/&#34;:
             self._endpoint += &#34;/&#34;
         # Get the Oauth2 URLs
-        response = requests.get(self.endpoint)
+        response = requests.get(self._endpoint)
         self._check_response(response)
         self._urls = response.json()
         self._client_id = self._urls.pop(&#34;client_id&#34;)
@@ -529,14 +535,16 @@ stored in the feature store - only enable if you trust the store</p></div>
                 self.client_id, token={&#34;refresh_token&#34;: os.environ.get(&#34;BYTEHUB_TOKEN&#34;)}
             )
             tokens = oauth.refresh_token(
-                self.urls[&#34;token_url&#34;],
+                self._urls[&#34;token_url&#34;],
                 client_id=self._client_id,
                 client_secret=None,
                 include_client_id=True,
             )
         else:
             # Use interactive login
-            oauth = OAuth2Session(client_id, redirect_uri=self.urls[&#34;callback_url&#34;])
+            oauth = OAuth2Session(
+                self._client_id, redirect_uri=self._urls[&#34;callback_url&#34;]
+            )
             authorization_url, state = oauth.authorization_url(self._urls[&#34;login_url&#34;])
             print(
                 f&#34;Please go to {authorization_url} and login. Copy the response code and paste below.&#34;
@@ -592,8 +600,8 @@ stored in the feature store - only enable if you trust the store</p></div>
         for idx, row in df.iterrows():
             # Get storage options
             opt = row[&#34;storage_options&#34;]
-            if &#34;expires&#34; in opt and pd.Timestamp(
-                opt[&#34;expires&#34;]
+            if &#34;_expires&#34; in opt and pd.Timestamp(
+                opt[&#34;_expires&#34;]
             ) &lt; pd.Timestamp.utcnow() + pd.Timedelta(&#34;1min&#34;):
                 self.list_namespaces()
                 return
@@ -616,7 +624,9 @@ stored in the feature store - only enable if you trust the store</p></div>
             )
         elif entity.lower() == &#34;namespace&#34;:
             self._refresh(name=kwargs.get(&#34;name&#34;, kwargs.get(&#34;namespace&#34;)))
-            ls = self._namespaces[name == kwargs.get(&#34;name&#34;, kwargs.get(&#34;namespace&#34;))]
+            ls = self._namespaces[
+                self._namespaces.name == kwargs.get(&#34;name&#34;, kwargs.get(&#34;namespace&#34;))
+            ]
         else:
             raise ValueError(f&#34;Unrecognised entity: {entity}&#34;)
         if len(ls) != 1:
@@ -640,8 +650,8 @@ stored in the feature store - only enable if you trust the store</p></div>
             mandatory=[&#34;url&#34;],
         )
         url = self._endpoint + &#34;namespace&#34;
-        params = {&#34;name&#34;: name, **kwargs}
-        response = requests.post(url, params=params, headers=self._api_headers())
+        body = {&#34;name&#34;: name, **kwargs}
+        response = requests.post(url, json=body, headers=self._api_headers())
         self._check_response(response)
         # Call list_namespaces to refresh namespace cache
         self.list_namespaces()
@@ -652,8 +662,8 @@ stored in the feature store - only enable if you trust the store</p></div>
             valid=[&#34;description&#34;, &#34;storage_options&#34;, &#34;meta&#34;],
         )
         url = self._endpoint + &#34;namespace&#34;
-        params = {&#34;name&#34;: name, **kwargs}
-        response = requests.patch(url, params=params, headers=self._api_headers())
+        body = {&#34;name&#34;: name, **kwargs}
+        response = requests.patch(url, json=body, headers=self._api_headers())
         self._check_response(response)
         # Call list_namespaces to refresh namespace cache
         self.list_namespaces()
@@ -665,7 +675,7 @@ stored in the feature store - only enable if you trust the store</p></div>
             )
         url = self._endpoint + &#34;namespace&#34;
         response = requests.delete(
-            url, params={&#34;name&#34;: name}, headers=self._api_headers()
+            url, json={&#34;name&#34;: name}, headers=self._api_headers()
         )
         self._check_response(response)
         # Call list_namespaces to refresh namespace cache
@@ -676,7 +686,7 @@ stored in the feature store - only enable if you trust the store</p></div>
         self._refresh(name=name)
         ns = self._get(&#34;namespace&#34;, name=name)
         # Check for unused data and remove it
-        feature_paths = fs.ls(posixpath.join(paths[0], &#34;feature&#34;))
+        feature_paths = ts.feature_paths(ns[&#34;url&#34;], ns[&#34;storage_options&#34;])
         active_feature_names = self.list_features(namespace=name)
         active_feature_names = active_feature_names.name.tolist()
         feature_data = [f.split(&#34;/&#34;)[-1] for f in feature_paths]
@@ -700,8 +710,8 @@ stored in the feature store - only enable if you trust the store</p></div>
             mandatory=[],
         )
         url = self._endpoint + &#34;feature&#34;
-        params = {&#34;name&#34;: name, &#34;namespace&#34;: namespace, **kwargs}
-        response = requests.post(url, params=params, headers=self._api_headers())
+        body = {&#34;name&#34;: name, &#34;namespace&#34;: namespace, **kwargs}
+        response = requests.post(url, json=body, headers=self._api_headers())
         self._check_response(response)
 
     def clone_feature(self, name, namespace=None, **kwargs):
@@ -751,7 +761,7 @@ stored in the feature store - only enable if you trust the store</p></div>
         url = self._endpoint + &#34;feature&#34;
         response = requests.delete(
             url,
-            params={&#34;name&#34;: name, &#34;namespace&#34;: namespace},
+            json={&#34;name&#34;: name, &#34;namespace&#34;: namespace},
             headers=self._api_headers(),
         )
         self._check_response(response)
@@ -767,8 +777,8 @@ stored in the feature store - only enable if you trust the store</p></div>
             valid=[&#34;description&#34;, &#34;meta&#34;, &#34;transform&#34;],
         )
         url = self._endpoint + &#34;feature&#34;
-        params = {&#34;name&#34;: name, &#34;namespace&#34;: namespace, **kwargs}
-        response = requests.patch(url, params=params, headers=self._api_headers())
+        body = {&#34;name&#34;: name, &#34;namespace&#34;: namespace, **kwargs}
+        response = requests.patch(url, json=body, headers=self._api_headers())
         self._check_response(response)
 
     def transform(self, name, namespace=None, from_features=[]):
@@ -837,7 +847,7 @@ stored in the feature store - only enable if you trust the store</p></div>
                 feature, from_date, to_date, freq, time_travel, callers=[]
             )
         else:
-            ns = self._get(&#34;namespace&#34;, name=namespace)
+            ns = self._get(&#34;namespace&#34;, name=feature[&#34;namespace&#34;])
             return ts.load(
                 feature[&#34;name&#34;],
                 ns[&#34;url&#34;],
@@ -931,7 +941,7 @@ Run this to free up disk space after deleting features</p>
     self._refresh(name=name)
     ns = self._get(&#34;namespace&#34;, name=name)
     # Check for unused data and remove it
-    feature_paths = fs.ls(posixpath.join(paths[0], &#34;feature&#34;))
+    feature_paths = ts.feature_paths(ns[&#34;url&#34;], ns[&#34;storage_options&#34;])
     active_feature_names = self.list_features(namespace=name)
     active_feature_names = active_feature_names.name.tolist()
     feature_data = [f.split(&#34;/&#34;)[-1] for f in feature_paths]
@@ -1028,8 +1038,8 @@ from_namespace, str, optional: namespace of the existing feature</p></div>
         mandatory=[],
     )
     url = self._endpoint + &#34;feature&#34;
-    params = {&#34;name&#34;: name, &#34;namespace&#34;: namespace, **kwargs}
-    response = requests.post(url, params=params, headers=self._api_headers())
+    body = {&#34;name&#34;: name, &#34;namespace&#34;: namespace, **kwargs}
+    response = requests.post(url, json=body, headers=self._api_headers())
     self._check_response(response)</code></pre>
 </details>
 </dd>
@@ -1055,8 +1065,8 @@ meta, dict, optional: key/value pairs of metadata</p></div>
         mandatory=[&#34;url&#34;],
     )
     url = self._endpoint + &#34;namespace&#34;
-    params = {&#34;name&#34;: name, **kwargs}
-    response = requests.post(url, params=params, headers=self._api_headers())
+    body = {&#34;name&#34;: name, **kwargs}
+    response = requests.post(url, json=body, headers=self._api_headers())
     self._check_response(response)
     # Call list_namespaces to refresh namespace cache
     self.list_namespaces()</code></pre>
@@ -1081,7 +1091,7 @@ metadata but leave the stored timeseries values intact</p></div>
     url = self._endpoint + &#34;feature&#34;
     response = requests.delete(
         url,
-        params={&#34;name&#34;: name, &#34;namespace&#34;: namespace},
+        json={&#34;name&#34;: name, &#34;namespace&#34;: namespace},
         headers=self._api_headers(),
     )
     self._check_response(response)
@@ -1113,7 +1123,7 @@ metadata but leave the stored timeseries values intact</p></div>
         )
     url = self._endpoint + &#34;namespace&#34;
     response = requests.delete(
-        url, params={&#34;name&#34;: name}, headers=self._api_headers()
+        url, json={&#34;name&#34;: name}, headers=self._api_headers()
     )
     self._check_response(response)
     # Call list_namespaces to refresh namespace cache
@@ -1359,8 +1369,8 @@ from_features, list[str]: list of features which should be transformed by this o
         valid=[&#34;description&#34;, &#34;meta&#34;, &#34;transform&#34;],
     )
     url = self._endpoint + &#34;feature&#34;
-    params = {&#34;name&#34;: name, &#34;namespace&#34;: namespace, **kwargs}
-    response = requests.patch(url, params=params, headers=self._api_headers())
+    body = {&#34;name&#34;: name, &#34;namespace&#34;: namespace, **kwargs}
+    response = requests.patch(url, json=body, headers=self._api_headers())
     self._check_response(response)</code></pre>
 </details>
 </dd>
@@ -1384,8 +1394,8 @@ meta, dict, optional: updated key/value pairs of metadata</p></div>
         valid=[&#34;description&#34;, &#34;storage_options&#34;, &#34;meta&#34;],
     )
     url = self._endpoint + &#34;namespace&#34;
-    params = {&#34;name&#34;: name, **kwargs}
-    response = requests.patch(url, params=params, headers=self._api_headers())
+    body = {&#34;name&#34;: name, **kwargs}
+    response = requests.patch(url, json=body, headers=self._api_headers())
     self._check_response(response)
     # Call list_namespaces to refresh namespace cache
     self.list_namespaces()</code></pre>
