@@ -22,450 +22,7 @@
 <h1 class="title">Module <code>bytehub.cloud</code></h1>
 </header>
 <section id="section-intro">
-<details class="source">
-<summary>
-<span>Expand source code</span>
-</summary>
-<pre><code class="python">import pandas as pd
-import posixpath
-from getpass import getpass
-import time
-import os
-import json
-from ._base import BaseFeatureStore
-from . import _timeseries as ts
-
-try:
-    # Allow for a minimal install with no requests
-    import requests
-    from requests_oauthlib import OAuth2Session
-except ImportError:
-    pass
-
-
-class CloudFeatureStore(BaseFeatureStore):
-    &#34;&#34;&#34;Cloud Feature Store
-    Connects to a hosted feature store via REST API.
-    &#34;&#34;&#34;
-
-    def __init__(
-        self,
-        connection_string=&#34;https://api.bytehub.ai&#34;,
-        backend=&#34;pandas&#34;,
-        enable_transforms=False,
-    ):
-        &#34;&#34;&#34;Connect to a cloud-hosted feature store
-
-        Args:
-            connection_string, str: URL of ByteHub Cloud, e.g. https://api.bytehub.ai
-            backend, str: either &#39;pandas&#39; (default) or &#39;dask&#39;, specifying the type
-                of dataframes returned by load_dataframe
-            enable_transforms, bool: whether to allow execution of pickled functions
-                stored in the feature store - only enable if you trust the store
-        &#34;&#34;&#34;
-        if backend.lower() not in [&#34;pandas&#34;, &#34;dask&#34;]:
-            raise ValueError(&#34;Backend must be either pandas or dask&#34;)
-        self.mode = backend.lower()
-        self._endpoint = connection_string
-        if &#34;/v1&#34; not in self._endpoint:
-            # Add API version
-            self._endpoint = posixpath.join(self._endpoint, &#34;v1/&#34;)
-        if self._endpoint[-1] != &#34;/&#34;:
-            self._endpoint += &#34;/&#34;
-        # Get the Oauth2 URLs
-        response = requests.get(self._endpoint)
-        self._check_response(response)
-        self._urls = response.json()
-        self._client_id = self._urls.pop(&#34;client_id&#34;)
-        # Decide how to authenticate
-        if os.environ.get(&#34;BYTEHUB_TOKEN&#34;):
-            # Non-interactive login using refresh token
-            oauth = OAuth2Session(
-                self.client_id, token={&#34;refresh_token&#34;: os.environ.get(&#34;BYTEHUB_TOKEN&#34;)}
-            )
-            tokens = oauth.refresh_token(
-                self._urls[&#34;token_url&#34;],
-                client_id=self._client_id,
-                client_secret=None,
-                include_client_id=True,
-            )
-        else:
-            # Use interactive login
-            oauth = OAuth2Session(
-                self._client_id, redirect_uri=self._urls[&#34;callback_url&#34;]
-            )
-            authorization_url, state = oauth.authorization_url(self._urls[&#34;login_url&#34;])
-            print(
-                f&#34;Please go to {authorization_url} and login. Copy the response code and paste below.&#34;
-            )
-            code_response = getpass(&#34;Response: &#34;)
-            tokens = oauth.fetch_token(
-                self._urls[&#34;token_url&#34;], code=code_response, include_client_id=True
-            )
-        self._tokens = tokens
-
-    def _check_response(self, response):
-        # Raise an exception if response is not OK
-        try:
-            response.raise_for_status()
-        except requests.exceptions.RequestException as e:
-            try:
-                payload = response.json()
-                message = payload.get(&#34;message&#34;, payload.get(&#34;Message&#34;, &#34;&#34;))
-            except requests.exceptions.RequestException:
-                message = response.text
-            raise RuntimeError(message)
-
-    def _check_tokens(self):
-        # Check that token hasn&#39;t expired
-        if time.time() &lt; self._tokens[&#34;expires_at&#34;] - 10:
-            return True
-        else:
-            # Token expired... refresh it
-            if &#34;refresh_token&#34; in self._tokens:
-                oauth = OAuth2Session(self._client_id, token=self._tokens)
-                tokens = oauth.refresh_token(
-                    self._urls[&#34;token_url&#34;],
-                    client_id=self._client_id,
-                    client_secret=None,
-                    include_client_id=True,
-                )
-                self._tokens = tokens
-            else:
-                raise RuntimeError(&#34;Cannot find refresh token&#34;)
-
-    def _api_headers(self):
-        # Headers to add to API requests
-        self._check_tokens()
-        return {
-            &#34;Authorization&#34;: self._tokens[&#34;access_token&#34;],
-        }
-
-    def _refresh(self, name=None):
-        # Check access token expiry, and refresh if required
-        df = self._namespaces
-        if name:
-            df = df[df.name == name]
-        for idx, row in df.iterrows():
-            # Get storage options
-            opt = row[&#34;storage_options&#34;]
-            if &#34;_expires&#34; in opt and pd.Timestamp(
-                opt[&#34;_expires&#34;]
-            ) &lt; pd.Timestamp.utcnow() + pd.Timedelta(&#34;1min&#34;):
-                self.list_namespaces()
-                return
-
-    def _exists(self, entity, **kwargs):
-        if entity.lower() == &#34;feature&#34;:
-            ls = self.list_features(
-                namespace=kwargs.get(&#34;namespace&#34;), name=kwargs.get(&#34;name&#34;)
-            )
-        elif entity.lower() == &#34;namespace&#34;:
-            ls = self.list_namespaces(name=kwargs.get(&#34;name&#34;, kwargs.get(&#34;namespace&#34;)))
-        else:
-            raise ValueError(f&#34;Unrecognised entity: {entity}&#34;)
-        return not ls.empty
-
-    def _get(self, entity, **kwargs):
-        if entity.lower() == &#34;feature&#34;:
-            ls = self.list_features(
-                namespace=kwargs.get(&#34;namespace&#34;), name=kwargs.get(&#34;name&#34;)
-            )
-        elif entity.lower() == &#34;namespace&#34;:
-            self._refresh(name=kwargs.get(&#34;name&#34;, kwargs.get(&#34;namespace&#34;)))
-            ls = self._namespaces[
-                self._namespaces.name == kwargs.get(&#34;name&#34;, kwargs.get(&#34;namespace&#34;))
-            ]
-        else:
-            raise ValueError(f&#34;Unrecognised entity: {entity}&#34;)
-        if len(ls) != 1:
-            raise ValueError(f&#34;{entity} not found: {kwargs}&#34;)
-        return ls.iloc[0].to_dict()
-
-    def list_namespaces(self, **kwargs):
-        self.__class__._validate_kwargs(kwargs, [&#34;name&#34;, &#34;namespace&#34;, &#34;regex&#34;])
-        url = self._endpoint + &#34;namespace&#34;
-        response = requests.get(url, params=kwargs, headers=self._api_headers())
-        self._check_response(response)
-        df = pd.DataFrame(response.json())
-        # Cache the namespace for use when loading/saving dataframes
-        self._namespaces = df
-        return df
-
-    def create_namespace(self, name, **kwargs):
-        self.__class__._validate_kwargs(
-            kwargs,
-            valid=[&#34;description&#34;, &#34;url&#34;, &#34;storage_options&#34;, &#34;meta&#34;],
-            mandatory=[&#34;url&#34;],
-        )
-        url = self._endpoint + &#34;namespace&#34;
-        body = {&#34;name&#34;: name, **kwargs}
-        response = requests.post(url, json=body, headers=self._api_headers())
-        self._check_response(response)
-        # Call list_namespaces to refresh namespace cache
-        self.list_namespaces()
-
-    def update_namespace(self, name, **kwargs):
-        self.__class__._validate_kwargs(
-            kwargs,
-            valid=[&#34;description&#34;, &#34;storage_options&#34;, &#34;meta&#34;],
-        )
-        url = self._endpoint + &#34;namespace&#34;
-        body = {&#34;name&#34;: name, **kwargs}
-        response = requests.patch(url, json=body, headers=self._api_headers())
-        self._check_response(response)
-        # Call list_namespaces to refresh namespace cache
-        self.list_namespaces()
-
-    def delete_namespace(self, name):
-        if not self.list_features(namespace=name).empty:
-            raise RuntimeError(
-                f&#34;{name} still contains features: these must be deleted first&#34;
-            )
-        url = self._endpoint + &#34;namespace&#34;
-        response = requests.delete(
-            url, json={&#34;name&#34;: name}, headers=self._api_headers()
-        )
-        self._check_response(response)
-        # Call list_namespaces to refresh namespace cache
-        self.list_namespaces()
-
-    def clean_namespace(self, name):
-        # Get namespace
-        self._refresh(name=name)
-        ns = self._get(&#34;namespace&#34;, name=name)
-        # Check for unused data and remove it
-        feature_paths = ts.feature_paths(ns[&#34;url&#34;], ns[&#34;storage_options&#34;])
-        active_feature_names = self.list_features(namespace=name)
-        active_feature_names = active_feature_names.name.tolist()
-        feature_data = [f.split(&#34;/&#34;)[-1] for f in feature_paths]
-        for feature in feature_data:
-            if feature not in active_feature_names:
-                # Redundant data... delete it
-                ts.delete(feature, ns[&#34;url&#34;], storage_options=ns[&#34;storage_options&#34;])
-
-    def list_features(self, **kwargs):
-        self.__class__._validate_kwargs(kwargs, valid=[&#34;name&#34;, &#34;namespace&#34;, &#34;regex&#34;])
-        url = self._endpoint + &#34;feature&#34;
-        response = requests.get(url, params=kwargs, headers=self._api_headers())
-        self._check_response(response)
-        df = pd.DataFrame(response.json())
-        return df
-
-    def create_feature(self, name, namespace=None, **kwargs):
-        self.__class__._validate_kwargs(
-            kwargs,
-            valid=[&#34;description&#34;, &#34;meta&#34;, &#34;partition&#34;, &#34;serialized&#34;, &#34;transform&#34;],
-            mandatory=[],
-        )
-        url = self._endpoint + &#34;feature&#34;
-        body = {&#34;name&#34;: name, &#34;namespace&#34;: namespace, **kwargs}
-        response = requests.post(url, json=body, headers=self._api_headers())
-        self._check_response(response)
-
-    def clone_feature(self, name, namespace=None, **kwargs):
-        self.__class__._validate_kwargs(
-            kwargs,
-            valid=[&#34;from_namespace&#34;, &#34;from_name&#34;],
-            mandatory=[&#34;from_name&#34;],
-        )
-        from_namespace, from_name = self.__class__._split_name(
-            kwargs.get(&#34;from_namespace&#34;), kwargs.get(&#34;from_name&#34;)
-        )
-        to_namespace, to_name = self.__class__._split_name(namespace, name)
-        if not self._exists(&#34;namespace&#34;, namespace=from_namespace):
-            raise ValueError(f&#34;{from_namespace} namespace does not exist&#34;)
-        if not self._exists(&#34;namespace&#34;, namespace=to_namespace):
-            raise ValueError(f&#34;{to_namespace} namespace does not exist&#34;)
-        # Get the existing feature
-        payload = self._get(&#34;feature&#34;, namespace=from_namespace, name=from_name)
-        _ = payload.pop(&#34;name&#34;)
-        _ = payload.pop(&#34;namespace&#34;)
-        # Create the new feature
-        self.create_feature(
-            name=to_name,
-            namespace=to_namespace,
-            **payload,
-        )
-        # Copy data to new feature, if this raises exception will rollback
-        if not payload.transform:
-            # Get location of this feature to copy to
-            from_ns = self._get(&#34;namespace&#34;, name=from_namespace)
-            to_ns = self._get(&#34;namespace&#34;, name=to_namespace)
-            try:
-                ts.copy(
-                    from_name,
-                    from_ns[&#34;url&#34;],
-                    from_ns[&#34;storage_options&#34;],
-                    to_name,
-                    to_ns[&#34;url&#34;],
-                    to_ns[&#34;storage_options&#34;],
-                )
-            except Exception as e:
-                # Rollback... delete the newly created feature
-                self.delete_feature(name=from_name, namespace=from_namespace)
-                raise RuntimeError(f&#34;Unable to save data to {path}: {str(e)}&#34;)
-
-    def delete_feature(self, name, namespace=None, delete_data=False):
-        url = self._endpoint + &#34;feature&#34;
-        response = requests.delete(
-            url,
-            json={&#34;name&#34;: name, &#34;namespace&#34;: namespace},
-            headers=self._api_headers(),
-        )
-        self._check_response(response)
-        # Delete data
-        if delete_data:
-            namespace, name = self.__class__._split_name(namespace, name)
-            ns = self._get(&#34;namespace&#34;, name=namespace)
-            ts.delete(name, ns[&#34;url&#34;], storage_options=ns[&#34;storage_options&#34;])
-
-    def update_feature(self, name, namespace=None, **kwargs):
-        self.__class__._validate_kwargs(
-            kwargs,
-            valid=[&#34;description&#34;, &#34;meta&#34;, &#34;transform&#34;],
-        )
-        url = self._endpoint + &#34;feature&#34;
-        body = {&#34;name&#34;: name, &#34;namespace&#34;: namespace, **kwargs}
-        response = requests.patch(url, json=body, headers=self._api_headers())
-        self._check_response(response)
-
-    def transform(self, name, namespace=None, from_features=[]):
-        def decorator(func):
-            # Create or update feature with transform
-            to_namespace, to_name = self._split_name(namespace=namespace, name=name)
-            computed_from = [f&#34;{ns}/{n}&#34; for ns, n in self._unpack_list(from_features)]
-            existing_features = self.list_features()
-            existing_features = existing_features.apply(
-                lambda x: x[&#34;namespace&#34;] + &#34;/&#34; + x[&#34;name&#34;], axis=1
-            ).tolist()
-            for feature in computed_from:
-                assert (
-                    feature in existing_features
-                ), f&#34;{feature} does not exist in the feature store&#34;
-
-            transform = {&#34;function&#34;: func, &#34;args&#34;: computed_from}
-            payload = {&#34;transform&#34;: transform, &#34;description&#34;: func.__doc__}
-            if self._exists(&#34;feature&#34;, namespace=to_namespace, name=to_name):
-                # Already exists, update it
-                self.update_feature(to_name, namespace=to_namespace, **payload)
-            else:
-                # Create a new feature
-                self.create_feature(to_name, namespace=to_namespace, **payload)
-            # Call the transform
-            def wrapped_func(*args, **kwargs):
-                return func(*args, **kwargs)
-
-            return wrapped_func
-
-        return decorator
-
-    def _load_transform(
-        self, feature, from_date, to_date, freq, time_travel, callers=[]
-    ):
-        # Check for recursive transforms
-        full_name = feature[&#34;namespace&#34;] + &#34;/&#34; + feature[&#34;name&#34;]
-        if full_name in callers:
-            raise RuntimeError(f&#34;Recursive feature transform detected on {full_name}&#34;)
-        # Load the transform function
-        func = utils.deserialize(feature[&#34;transform&#34;][&#34;function&#34;])
-        # Load the features to transform
-        dfs = []
-        # Load each requested feature
-        for f in feature[&#34;transform&#34;][&#34;args&#34;]:
-            namespace, name = f.split(&#34;/&#34;)[0], &#34;/&#34;.join(f.split(&#34;/&#34;)[1:])
-            f = self._get(&#34;feature&#34;, namespace=namespace, name=name)
-            ns = self._get(&#34;namespace&#34;, name=namespace)
-            # Load individual feature
-            df = self._load(
-                f, from_date, to_date, freq, time_travel, callers=[*callers, full_name]
-            )
-            dfs.append(df.rename(columns={&#34;value&#34;: f&#34;{namespace}/{name}&#34;}))
-        # Merge features into a single dataframe
-        dfs = ts.concat(dfs)
-        # Make sure columns are in the same order as args
-        dfs = dfs[self.transform[&#34;args&#34;]]
-        # Apply transform function
-        transformed = ts.transform(dfs, func, mode)
-        return transformed
-
-    def _load(self, feature, from_date, to_date, freq, time_travel, callers=[]):
-        if feature[&#34;transform&#34;]:
-            # Apply feature transform
-            return self._load_transform(
-                feature, from_date, to_date, freq, time_travel, callers=[]
-            )
-        else:
-            ns = self._get(&#34;namespace&#34;, name=feature[&#34;namespace&#34;])
-            return ts.load(
-                feature[&#34;name&#34;],
-                ns[&#34;url&#34;],
-                ns[&#34;storage_options&#34;],
-                from_date,
-                to_date,
-                freq,
-                time_travel,
-                self.mode,
-                feature[&#34;serialized&#34;],
-            )
-
-    def load_dataframe(
-        self,
-        features,
-        from_date=None,
-        to_date=None,
-        freq=None,
-        time_travel=None,
-    ):
-        dfs = []
-        # Load each requested feature
-        for f in self._unpack_list(features):
-            namespace, name = f
-            feature = self._get(&#34;feature&#34;, name=name, namespace=namespace)
-            df = self._load(feature, from_date, to_date, freq, time_travel)
-            dfs.append(df.rename(columns={&#34;value&#34;: f&#34;{namespace}/{name}&#34;}))
-        return ts.concat(dfs)
-
-    def save_dataframe(self, df, name=None, namespace=None):
-        # Check dataframe columns
-        feature_columns = df.columns.difference([&#34;time&#34;, &#34;created_time&#34;])
-        if len(feature_columns) == 1:
-            # Single feature to save
-            if feature_columns[0] == &#34;value&#34;:
-                if not name:
-                    raise ValueError(&#34;Must specify feature name&#34;)
-            else:
-                name = feature_columns[0]
-                df = df.rename(columns={name: &#34;value&#34;})
-            feature = self._get(&#34;feature&#34;, namespace=namespace, name=name)
-            # Save data for this feature
-            namespace, name = self.__class__._split_name(namespace, name)
-            ns = self._get(&#34;namespace&#34;, name=namespace)
-            # Save individual feature
-            ts.save(
-                df,
-                name,
-                ns[&#34;url&#34;],
-                ns[&#34;storage_options&#34;],
-                partition=feature[&#34;partition&#34;],
-                serialized=feature[&#34;serialized&#34;],
-            )
-        else:
-            # Multiple features in column names
-            for feature_name in feature_columns:
-                namespace, name = self.__class__._split_name(namespace, feature_name)
-                if not self._exists(&#34;feature&#34;, namespace=namespace, name=name):
-                    raise ValueError(
-                        f&#34;Feature named {name} does not exist in {namespace}&#34;
-                    )
-            for feature_name in feature_columns:
-                # Save individual features
-                feature_df = df[[*df.columns.difference(feature_columns), feature_name]]
-                self.save_dataframe(feature_df)
-
-    def last(self, features):
-        pass</code></pre>
-</details>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/4335f7c438c19b73103620801eb4b6ddb8d0e78f/bytehub/cloud.py#L0-L445" class="git-link">Browse git</a></div>
 </section>
 <section>
 </section>
@@ -481,442 +38,27 @@ class CloudFeatureStore(BaseFeatureStore):
 <span>(</span><span>connection_string='https://api.bytehub.ai', backend='pandas', enable_transforms=False)</span>
 </code></dt>
 <dd>
-<div class="desc"><p>Cloud Feature Store
-Connects to a hosted feature store via REST API.</p>
-<p>Connect to a cloud-hosted feature store</p>
+<div class="desc"><p><strong>Cloud Feature Store</strong></p>
+<p>Connects to a hosted feature store via REST API.</p>
+<p>When using specifying features
+for <code>create_feature</code>, <code>update_feature</code>, etc., use either:</p>
+<ul>
+<li><code>namespace</code> and <code>name</code> as arguments; or</li>
+<li>specify <code>name</code> in the format <code>"my-namespace/my-feature"</code>.</li>
+</ul>
 <h2 id="args">Args</h2>
-<p>connection_string, str: URL of ByteHub Cloud, e.g. <a href="https://api.bytehub.ai">https://api.bytehub.ai</a>
-backend, str: either 'pandas' (default) or 'dask', specifying the type
-of dataframes returned by load_dataframe
-enable_transforms, bool: whether to allow execution of pickled functions
-stored in the feature store - only enable if you trust the store</p></div>
-<details class="source">
-<summary>
-<span>Expand source code</span>
-</summary>
-<pre><code class="python">class CloudFeatureStore(BaseFeatureStore):
-    &#34;&#34;&#34;Cloud Feature Store
-    Connects to a hosted feature store via REST API.
-    &#34;&#34;&#34;
-
-    def __init__(
-        self,
-        connection_string=&#34;https://api.bytehub.ai&#34;,
-        backend=&#34;pandas&#34;,
-        enable_transforms=False,
-    ):
-        &#34;&#34;&#34;Connect to a cloud-hosted feature store
-
-        Args:
-            connection_string, str: URL of ByteHub Cloud, e.g. https://api.bytehub.ai
-            backend, str: either &#39;pandas&#39; (default) or &#39;dask&#39;, specifying the type
-                of dataframes returned by load_dataframe
-            enable_transforms, bool: whether to allow execution of pickled functions
-                stored in the feature store - only enable if you trust the store
-        &#34;&#34;&#34;
-        if backend.lower() not in [&#34;pandas&#34;, &#34;dask&#34;]:
-            raise ValueError(&#34;Backend must be either pandas or dask&#34;)
-        self.mode = backend.lower()
-        self._endpoint = connection_string
-        if &#34;/v1&#34; not in self._endpoint:
-            # Add API version
-            self._endpoint = posixpath.join(self._endpoint, &#34;v1/&#34;)
-        if self._endpoint[-1] != &#34;/&#34;:
-            self._endpoint += &#34;/&#34;
-        # Get the Oauth2 URLs
-        response = requests.get(self._endpoint)
-        self._check_response(response)
-        self._urls = response.json()
-        self._client_id = self._urls.pop(&#34;client_id&#34;)
-        # Decide how to authenticate
-        if os.environ.get(&#34;BYTEHUB_TOKEN&#34;):
-            # Non-interactive login using refresh token
-            oauth = OAuth2Session(
-                self.client_id, token={&#34;refresh_token&#34;: os.environ.get(&#34;BYTEHUB_TOKEN&#34;)}
-            )
-            tokens = oauth.refresh_token(
-                self._urls[&#34;token_url&#34;],
-                client_id=self._client_id,
-                client_secret=None,
-                include_client_id=True,
-            )
-        else:
-            # Use interactive login
-            oauth = OAuth2Session(
-                self._client_id, redirect_uri=self._urls[&#34;callback_url&#34;]
-            )
-            authorization_url, state = oauth.authorization_url(self._urls[&#34;login_url&#34;])
-            print(
-                f&#34;Please go to {authorization_url} and login. Copy the response code and paste below.&#34;
-            )
-            code_response = getpass(&#34;Response: &#34;)
-            tokens = oauth.fetch_token(
-                self._urls[&#34;token_url&#34;], code=code_response, include_client_id=True
-            )
-        self._tokens = tokens
-
-    def _check_response(self, response):
-        # Raise an exception if response is not OK
-        try:
-            response.raise_for_status()
-        except requests.exceptions.RequestException as e:
-            try:
-                payload = response.json()
-                message = payload.get(&#34;message&#34;, payload.get(&#34;Message&#34;, &#34;&#34;))
-            except requests.exceptions.RequestException:
-                message = response.text
-            raise RuntimeError(message)
-
-    def _check_tokens(self):
-        # Check that token hasn&#39;t expired
-        if time.time() &lt; self._tokens[&#34;expires_at&#34;] - 10:
-            return True
-        else:
-            # Token expired... refresh it
-            if &#34;refresh_token&#34; in self._tokens:
-                oauth = OAuth2Session(self._client_id, token=self._tokens)
-                tokens = oauth.refresh_token(
-                    self._urls[&#34;token_url&#34;],
-                    client_id=self._client_id,
-                    client_secret=None,
-                    include_client_id=True,
-                )
-                self._tokens = tokens
-            else:
-                raise RuntimeError(&#34;Cannot find refresh token&#34;)
-
-    def _api_headers(self):
-        # Headers to add to API requests
-        self._check_tokens()
-        return {
-            &#34;Authorization&#34;: self._tokens[&#34;access_token&#34;],
-        }
-
-    def _refresh(self, name=None):
-        # Check access token expiry, and refresh if required
-        df = self._namespaces
-        if name:
-            df = df[df.name == name]
-        for idx, row in df.iterrows():
-            # Get storage options
-            opt = row[&#34;storage_options&#34;]
-            if &#34;_expires&#34; in opt and pd.Timestamp(
-                opt[&#34;_expires&#34;]
-            ) &lt; pd.Timestamp.utcnow() + pd.Timedelta(&#34;1min&#34;):
-                self.list_namespaces()
-                return
-
-    def _exists(self, entity, **kwargs):
-        if entity.lower() == &#34;feature&#34;:
-            ls = self.list_features(
-                namespace=kwargs.get(&#34;namespace&#34;), name=kwargs.get(&#34;name&#34;)
-            )
-        elif entity.lower() == &#34;namespace&#34;:
-            ls = self.list_namespaces(name=kwargs.get(&#34;name&#34;, kwargs.get(&#34;namespace&#34;)))
-        else:
-            raise ValueError(f&#34;Unrecognised entity: {entity}&#34;)
-        return not ls.empty
-
-    def _get(self, entity, **kwargs):
-        if entity.lower() == &#34;feature&#34;:
-            ls = self.list_features(
-                namespace=kwargs.get(&#34;namespace&#34;), name=kwargs.get(&#34;name&#34;)
-            )
-        elif entity.lower() == &#34;namespace&#34;:
-            self._refresh(name=kwargs.get(&#34;name&#34;, kwargs.get(&#34;namespace&#34;)))
-            ls = self._namespaces[
-                self._namespaces.name == kwargs.get(&#34;name&#34;, kwargs.get(&#34;namespace&#34;))
-            ]
-        else:
-            raise ValueError(f&#34;Unrecognised entity: {entity}&#34;)
-        if len(ls) != 1:
-            raise ValueError(f&#34;{entity} not found: {kwargs}&#34;)
-        return ls.iloc[0].to_dict()
-
-    def list_namespaces(self, **kwargs):
-        self.__class__._validate_kwargs(kwargs, [&#34;name&#34;, &#34;namespace&#34;, &#34;regex&#34;])
-        url = self._endpoint + &#34;namespace&#34;
-        response = requests.get(url, params=kwargs, headers=self._api_headers())
-        self._check_response(response)
-        df = pd.DataFrame(response.json())
-        # Cache the namespace for use when loading/saving dataframes
-        self._namespaces = df
-        return df
-
-    def create_namespace(self, name, **kwargs):
-        self.__class__._validate_kwargs(
-            kwargs,
-            valid=[&#34;description&#34;, &#34;url&#34;, &#34;storage_options&#34;, &#34;meta&#34;],
-            mandatory=[&#34;url&#34;],
-        )
-        url = self._endpoint + &#34;namespace&#34;
-        body = {&#34;name&#34;: name, **kwargs}
-        response = requests.post(url, json=body, headers=self._api_headers())
-        self._check_response(response)
-        # Call list_namespaces to refresh namespace cache
-        self.list_namespaces()
-
-    def update_namespace(self, name, **kwargs):
-        self.__class__._validate_kwargs(
-            kwargs,
-            valid=[&#34;description&#34;, &#34;storage_options&#34;, &#34;meta&#34;],
-        )
-        url = self._endpoint + &#34;namespace&#34;
-        body = {&#34;name&#34;: name, **kwargs}
-        response = requests.patch(url, json=body, headers=self._api_headers())
-        self._check_response(response)
-        # Call list_namespaces to refresh namespace cache
-        self.list_namespaces()
-
-    def delete_namespace(self, name):
-        if not self.list_features(namespace=name).empty:
-            raise RuntimeError(
-                f&#34;{name} still contains features: these must be deleted first&#34;
-            )
-        url = self._endpoint + &#34;namespace&#34;
-        response = requests.delete(
-            url, json={&#34;name&#34;: name}, headers=self._api_headers()
-        )
-        self._check_response(response)
-        # Call list_namespaces to refresh namespace cache
-        self.list_namespaces()
-
-    def clean_namespace(self, name):
-        # Get namespace
-        self._refresh(name=name)
-        ns = self._get(&#34;namespace&#34;, name=name)
-        # Check for unused data and remove it
-        feature_paths = ts.feature_paths(ns[&#34;url&#34;], ns[&#34;storage_options&#34;])
-        active_feature_names = self.list_features(namespace=name)
-        active_feature_names = active_feature_names.name.tolist()
-        feature_data = [f.split(&#34;/&#34;)[-1] for f in feature_paths]
-        for feature in feature_data:
-            if feature not in active_feature_names:
-                # Redundant data... delete it
-                ts.delete(feature, ns[&#34;url&#34;], storage_options=ns[&#34;storage_options&#34;])
-
-    def list_features(self, **kwargs):
-        self.__class__._validate_kwargs(kwargs, valid=[&#34;name&#34;, &#34;namespace&#34;, &#34;regex&#34;])
-        url = self._endpoint + &#34;feature&#34;
-        response = requests.get(url, params=kwargs, headers=self._api_headers())
-        self._check_response(response)
-        df = pd.DataFrame(response.json())
-        return df
-
-    def create_feature(self, name, namespace=None, **kwargs):
-        self.__class__._validate_kwargs(
-            kwargs,
-            valid=[&#34;description&#34;, &#34;meta&#34;, &#34;partition&#34;, &#34;serialized&#34;, &#34;transform&#34;],
-            mandatory=[],
-        )
-        url = self._endpoint + &#34;feature&#34;
-        body = {&#34;name&#34;: name, &#34;namespace&#34;: namespace, **kwargs}
-        response = requests.post(url, json=body, headers=self._api_headers())
-        self._check_response(response)
-
-    def clone_feature(self, name, namespace=None, **kwargs):
-        self.__class__._validate_kwargs(
-            kwargs,
-            valid=[&#34;from_namespace&#34;, &#34;from_name&#34;],
-            mandatory=[&#34;from_name&#34;],
-        )
-        from_namespace, from_name = self.__class__._split_name(
-            kwargs.get(&#34;from_namespace&#34;), kwargs.get(&#34;from_name&#34;)
-        )
-        to_namespace, to_name = self.__class__._split_name(namespace, name)
-        if not self._exists(&#34;namespace&#34;, namespace=from_namespace):
-            raise ValueError(f&#34;{from_namespace} namespace does not exist&#34;)
-        if not self._exists(&#34;namespace&#34;, namespace=to_namespace):
-            raise ValueError(f&#34;{to_namespace} namespace does not exist&#34;)
-        # Get the existing feature
-        payload = self._get(&#34;feature&#34;, namespace=from_namespace, name=from_name)
-        _ = payload.pop(&#34;name&#34;)
-        _ = payload.pop(&#34;namespace&#34;)
-        # Create the new feature
-        self.create_feature(
-            name=to_name,
-            namespace=to_namespace,
-            **payload,
-        )
-        # Copy data to new feature, if this raises exception will rollback
-        if not payload.transform:
-            # Get location of this feature to copy to
-            from_ns = self._get(&#34;namespace&#34;, name=from_namespace)
-            to_ns = self._get(&#34;namespace&#34;, name=to_namespace)
-            try:
-                ts.copy(
-                    from_name,
-                    from_ns[&#34;url&#34;],
-                    from_ns[&#34;storage_options&#34;],
-                    to_name,
-                    to_ns[&#34;url&#34;],
-                    to_ns[&#34;storage_options&#34;],
-                )
-            except Exception as e:
-                # Rollback... delete the newly created feature
-                self.delete_feature(name=from_name, namespace=from_namespace)
-                raise RuntimeError(f&#34;Unable to save data to {path}: {str(e)}&#34;)
-
-    def delete_feature(self, name, namespace=None, delete_data=False):
-        url = self._endpoint + &#34;feature&#34;
-        response = requests.delete(
-            url,
-            json={&#34;name&#34;: name, &#34;namespace&#34;: namespace},
-            headers=self._api_headers(),
-        )
-        self._check_response(response)
-        # Delete data
-        if delete_data:
-            namespace, name = self.__class__._split_name(namespace, name)
-            ns = self._get(&#34;namespace&#34;, name=namespace)
-            ts.delete(name, ns[&#34;url&#34;], storage_options=ns[&#34;storage_options&#34;])
-
-    def update_feature(self, name, namespace=None, **kwargs):
-        self.__class__._validate_kwargs(
-            kwargs,
-            valid=[&#34;description&#34;, &#34;meta&#34;, &#34;transform&#34;],
-        )
-        url = self._endpoint + &#34;feature&#34;
-        body = {&#34;name&#34;: name, &#34;namespace&#34;: namespace, **kwargs}
-        response = requests.patch(url, json=body, headers=self._api_headers())
-        self._check_response(response)
-
-    def transform(self, name, namespace=None, from_features=[]):
-        def decorator(func):
-            # Create or update feature with transform
-            to_namespace, to_name = self._split_name(namespace=namespace, name=name)
-            computed_from = [f&#34;{ns}/{n}&#34; for ns, n in self._unpack_list(from_features)]
-            existing_features = self.list_features()
-            existing_features = existing_features.apply(
-                lambda x: x[&#34;namespace&#34;] + &#34;/&#34; + x[&#34;name&#34;], axis=1
-            ).tolist()
-            for feature in computed_from:
-                assert (
-                    feature in existing_features
-                ), f&#34;{feature} does not exist in the feature store&#34;
-
-            transform = {&#34;function&#34;: func, &#34;args&#34;: computed_from}
-            payload = {&#34;transform&#34;: transform, &#34;description&#34;: func.__doc__}
-            if self._exists(&#34;feature&#34;, namespace=to_namespace, name=to_name):
-                # Already exists, update it
-                self.update_feature(to_name, namespace=to_namespace, **payload)
-            else:
-                # Create a new feature
-                self.create_feature(to_name, namespace=to_namespace, **payload)
-            # Call the transform
-            def wrapped_func(*args, **kwargs):
-                return func(*args, **kwargs)
-
-            return wrapped_func
-
-        return decorator
-
-    def _load_transform(
-        self, feature, from_date, to_date, freq, time_travel, callers=[]
-    ):
-        # Check for recursive transforms
-        full_name = feature[&#34;namespace&#34;] + &#34;/&#34; + feature[&#34;name&#34;]
-        if full_name in callers:
-            raise RuntimeError(f&#34;Recursive feature transform detected on {full_name}&#34;)
-        # Load the transform function
-        func = utils.deserialize(feature[&#34;transform&#34;][&#34;function&#34;])
-        # Load the features to transform
-        dfs = []
-        # Load each requested feature
-        for f in feature[&#34;transform&#34;][&#34;args&#34;]:
-            namespace, name = f.split(&#34;/&#34;)[0], &#34;/&#34;.join(f.split(&#34;/&#34;)[1:])
-            f = self._get(&#34;feature&#34;, namespace=namespace, name=name)
-            ns = self._get(&#34;namespace&#34;, name=namespace)
-            # Load individual feature
-            df = self._load(
-                f, from_date, to_date, freq, time_travel, callers=[*callers, full_name]
-            )
-            dfs.append(df.rename(columns={&#34;value&#34;: f&#34;{namespace}/{name}&#34;}))
-        # Merge features into a single dataframe
-        dfs = ts.concat(dfs)
-        # Make sure columns are in the same order as args
-        dfs = dfs[self.transform[&#34;args&#34;]]
-        # Apply transform function
-        transformed = ts.transform(dfs, func, mode)
-        return transformed
-
-    def _load(self, feature, from_date, to_date, freq, time_travel, callers=[]):
-        if feature[&#34;transform&#34;]:
-            # Apply feature transform
-            return self._load_transform(
-                feature, from_date, to_date, freq, time_travel, callers=[]
-            )
-        else:
-            ns = self._get(&#34;namespace&#34;, name=feature[&#34;namespace&#34;])
-            return ts.load(
-                feature[&#34;name&#34;],
-                ns[&#34;url&#34;],
-                ns[&#34;storage_options&#34;],
-                from_date,
-                to_date,
-                freq,
-                time_travel,
-                self.mode,
-                feature[&#34;serialized&#34;],
-            )
-
-    def load_dataframe(
-        self,
-        features,
-        from_date=None,
-        to_date=None,
-        freq=None,
-        time_travel=None,
-    ):
-        dfs = []
-        # Load each requested feature
-        for f in self._unpack_list(features):
-            namespace, name = f
-            feature = self._get(&#34;feature&#34;, name=name, namespace=namespace)
-            df = self._load(feature, from_date, to_date, freq, time_travel)
-            dfs.append(df.rename(columns={&#34;value&#34;: f&#34;{namespace}/{name}&#34;}))
-        return ts.concat(dfs)
-
-    def save_dataframe(self, df, name=None, namespace=None):
-        # Check dataframe columns
-        feature_columns = df.columns.difference([&#34;time&#34;, &#34;created_time&#34;])
-        if len(feature_columns) == 1:
-            # Single feature to save
-            if feature_columns[0] == &#34;value&#34;:
-                if not name:
-                    raise ValueError(&#34;Must specify feature name&#34;)
-            else:
-                name = feature_columns[0]
-                df = df.rename(columns={name: &#34;value&#34;})
-            feature = self._get(&#34;feature&#34;, namespace=namespace, name=name)
-            # Save data for this feature
-            namespace, name = self.__class__._split_name(namespace, name)
-            ns = self._get(&#34;namespace&#34;, name=namespace)
-            # Save individual feature
-            ts.save(
-                df,
-                name,
-                ns[&#34;url&#34;],
-                ns[&#34;storage_options&#34;],
-                partition=feature[&#34;partition&#34;],
-                serialized=feature[&#34;serialized&#34;],
-            )
-        else:
-            # Multiple features in column names
-            for feature_name in feature_columns:
-                namespace, name = self.__class__._split_name(namespace, feature_name)
-                if not self._exists(&#34;feature&#34;, namespace=namespace, name=name):
-                    raise ValueError(
-                        f&#34;Feature named {name} does not exist in {namespace}&#34;
-                    )
-            for feature_name in feature_columns:
-                # Save individual features
-                feature_df = df[[*df.columns.difference(feature_columns), feature_name]]
-                self.save_dataframe(feature_df)
-
-    def last(self, features):
-        pass</code></pre>
-</details>
+<dl>
+<dt><strong><code>connection_string</code></strong> :&ensp;<code>str</code></dt>
+<dd>URL of ByteHub Cloud, e.g. <a href="https://api.bytehub.ai">https://api.bytehub.ai</a>.</dd>
+<dt><strong><code>backend</code></strong> :&ensp;<code>str</code>, optional</dt>
+<dd>either <code>"pandas"</code> (default) or <code>"dask"</code>, specifying the type
+of dataframes returned by <code>load_dataframe</code>.</dd>
+<dt><strong><code>enable_transforms</code></strong> :&ensp;<code>bool</code>, optional</dt>
+<dd>whether to allow execution of pickled functions
+stored in the feature store. Required for feature transforms, but should only be enabled
+if you trust the feature store and the transforms that have been saved to it.</dd>
+</dl></div>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/4335f7c438c19b73103620801eb4b6ddb8d0e78f/bytehub/cloud.py#L18-L446" class="git-link">Browse git</a></div>
 <h3>Ancestors</h3>
 <ul class="hlist">
 <li>bytehub._base.BaseFeatureStore</li>
@@ -931,25 +73,11 @@ stored in the feature store - only enable if you trust the store</p></div>
 <div class="desc"><p>Removes any data that is not associated with features in the namespace.
 Run this to free up disk space after deleting features</p>
 <h2 id="args">Args</h2>
-<p>name:, str: namespace to clean</p></div>
-<details class="source">
-<summary>
-<span>Expand source code</span>
-</summary>
-<pre><code class="python">def clean_namespace(self, name):
-    # Get namespace
-    self._refresh(name=name)
-    ns = self._get(&#34;namespace&#34;, name=name)
-    # Check for unused data and remove it
-    feature_paths = ts.feature_paths(ns[&#34;url&#34;], ns[&#34;storage_options&#34;])
-    active_feature_names = self.list_features(namespace=name)
-    active_feature_names = active_feature_names.name.tolist()
-    feature_data = [f.split(&#34;/&#34;)[-1] for f in feature_paths]
-    for feature in feature_data:
-        if feature not in active_feature_names:
-            # Redundant data... delete it
-            ts.delete(feature, ns[&#34;url&#34;], storage_options=ns[&#34;storage_options&#34;])</code></pre>
-</details>
+<dl>
+<dt><strong><code>name</code></strong> :&ensp;<code>str</code></dt>
+<dd>namespace to clean</dd>
+</dl></div>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/4335f7c438c19b73103620801eb4b6ddb8d0e78f/bytehub/cloud.py#L212-L224" class="git-link">Browse git</a></div>
 </dd>
 <dt id="bytehub.cloud.CloudFeatureStore.clone_feature"><code class="name flex">
 <span>def <span class="ident">clone_feature</span></span>(<span>self, name, namespace=None, **kwargs)</span>
@@ -957,57 +85,17 @@ Run this to free up disk space after deleting features</p>
 <dd>
 <div class="desc"><p>Create a new feature by cloning an existing one.</p>
 <h2 id="args">Args</h2>
-<p>name, str: name of the feature
-namespace, str, optional: namespace which should hold this feature
-from_name, str: the name of the existing feature to copy from
-from_namespace, str, optional: namespace of the existing feature</p></div>
-<details class="source">
-<summary>
-<span>Expand source code</span>
-</summary>
-<pre><code class="python">def clone_feature(self, name, namespace=None, **kwargs):
-    self.__class__._validate_kwargs(
-        kwargs,
-        valid=[&#34;from_namespace&#34;, &#34;from_name&#34;],
-        mandatory=[&#34;from_name&#34;],
-    )
-    from_namespace, from_name = self.__class__._split_name(
-        kwargs.get(&#34;from_namespace&#34;), kwargs.get(&#34;from_name&#34;)
-    )
-    to_namespace, to_name = self.__class__._split_name(namespace, name)
-    if not self._exists(&#34;namespace&#34;, namespace=from_namespace):
-        raise ValueError(f&#34;{from_namespace} namespace does not exist&#34;)
-    if not self._exists(&#34;namespace&#34;, namespace=to_namespace):
-        raise ValueError(f&#34;{to_namespace} namespace does not exist&#34;)
-    # Get the existing feature
-    payload = self._get(&#34;feature&#34;, namespace=from_namespace, name=from_name)
-    _ = payload.pop(&#34;name&#34;)
-    _ = payload.pop(&#34;namespace&#34;)
-    # Create the new feature
-    self.create_feature(
-        name=to_name,
-        namespace=to_namespace,
-        **payload,
-    )
-    # Copy data to new feature, if this raises exception will rollback
-    if not payload.transform:
-        # Get location of this feature to copy to
-        from_ns = self._get(&#34;namespace&#34;, name=from_namespace)
-        to_ns = self._get(&#34;namespace&#34;, name=to_namespace)
-        try:
-            ts.copy(
-                from_name,
-                from_ns[&#34;url&#34;],
-                from_ns[&#34;storage_options&#34;],
-                to_name,
-                to_ns[&#34;url&#34;],
-                to_ns[&#34;storage_options&#34;],
-            )
-        except Exception as e:
-            # Rollback... delete the newly created feature
-            self.delete_feature(name=from_name, namespace=from_namespace)
-            raise RuntimeError(f&#34;Unable to save data to {path}: {str(e)}&#34;)</code></pre>
-</details>
+<dl>
+<dt><strong><code>name</code></strong> :&ensp;<code>str</code></dt>
+<dd>name of the feature.</dd>
+<dt><strong><code>namespace</code></strong> :&ensp;<code>str</code>, optional</dt>
+<dd>namespace which should hold this feature.</dd>
+<dt><strong><code>from_name</code></strong> :&ensp;<code>str</code></dt>
+<dd>the name of the existing feature to copy from.</dd>
+<dt><strong><code>from_namespace</code></strong> :&ensp;<code>str</code>, optional</dt>
+<dd>namespace of the existing feature.</dd>
+</dl></div>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/4335f7c438c19b73103620801eb4b6ddb8d0e78f/bytehub/cloud.py#L245-L286" class="git-link">Browse git</a></div>
 </dd>
 <dt id="bytehub.cloud.CloudFeatureStore.create_feature"><code class="name flex">
 <span>def <span class="ident">create_feature</span></span>(<span>self, name, namespace=None, **kwargs)</span>
@@ -1016,32 +104,24 @@ from_namespace, str, optional: namespace of the existing feature</p></div>
 <div class="desc"><p>Create a new feature in the feature store.</p>
 <h2 id="args">Args</h2>
 <dl>
-<dt>name, str: name of the feature</dt>
-<dt>namespace, str, optional: namespace which should hold this feature</dt>
-<dt>description, str, optional: description for this namespace</dt>
-<dt>partition, str, optional: partitioning of stored timeseries (default: 'date')</dt>
-<dt>serialized, bool, optional: if True, converts values to JSON strings before saving,</dt>
-<dt>which can help in situations where the format/schema of the data changes</dt>
-<dt>over time</dt>
-<dt><strong><code>transform</code></strong></dt>
-<dd>str, optional: pickled function code for feature transforms</dd>
-</dl>
-<p>meta, dict, optional: key/value pairs of metadata</p></div>
-<details class="source">
-<summary>
-<span>Expand source code</span>
-</summary>
-<pre><code class="python">def create_feature(self, name, namespace=None, **kwargs):
-    self.__class__._validate_kwargs(
-        kwargs,
-        valid=[&#34;description&#34;, &#34;meta&#34;, &#34;partition&#34;, &#34;serialized&#34;, &#34;transform&#34;],
-        mandatory=[],
-    )
-    url = self._endpoint + &#34;feature&#34;
-    body = {&#34;name&#34;: name, &#34;namespace&#34;: namespace, **kwargs}
-    response = requests.post(url, json=body, headers=self._api_headers())
-    self._check_response(response)</code></pre>
-</details>
+<dt><strong><code>name</code></strong> :&ensp;<code>str</code></dt>
+<dd>name of the feature</dd>
+<dt><strong><code>namespace</code></strong> :&ensp;<code>str</code>, optional</dt>
+<dd>namespace which should hold this feature.</dd>
+<dt><strong><code>description</code></strong> :&ensp;<code>str</code>, optional</dt>
+<dd>description for this namespace.</dd>
+<dt><strong><code>partition</code></strong> :&ensp;<code>str</code>, optional</dt>
+<dd>partitioning of stored timeseries (default: <code>"date"</code>).</dd>
+<dt><strong><code>serialized</code></strong> :&ensp;<code>bool</code>, optional</dt>
+<dd>if <code>True</code>, converts values to JSON strings before saving,
+which can help in situations where the format/schema of the data changes
+over time.</dd>
+<dt><strong><code>transform</code></strong> :&ensp;<code>str</code>, optional</dt>
+<dd>pickled function code for feature transforms.</dd>
+<dt><strong><code>meta</code></strong> :&ensp;<code>dict</code>, optional</dt>
+<dd>key/value pairs of metadata.</dd>
+</dl></div>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/4335f7c438c19b73103620801eb4b6ddb8d0e78f/bytehub/cloud.py#L234-L243" class="git-link">Browse git</a></div>
 </dd>
 <dt id="bytehub.cloud.CloudFeatureStore.create_namespace"><code class="name flex">
 <span>def <span class="ident">create_namespace</span></span>(<span>self, name, **kwargs)</span>
@@ -1049,28 +129,19 @@ from_namespace, str, optional: namespace of the existing feature</p></div>
 <dd>
 <div class="desc"><p>Create a new namespace in the feature store.</p>
 <h2 id="args">Args</h2>
-<p>name, str: name of the namespace
-description, str, optional: description for this namespace
-url, str: url of data store
-storage_options, dict, optional: storage options to be passed to Dask
-meta, dict, optional: key/value pairs of metadata</p></div>
-<details class="source">
-<summary>
-<span>Expand source code</span>
-</summary>
-<pre><code class="python">def create_namespace(self, name, **kwargs):
-    self.__class__._validate_kwargs(
-        kwargs,
-        valid=[&#34;description&#34;, &#34;url&#34;, &#34;storage_options&#34;, &#34;meta&#34;],
-        mandatory=[&#34;url&#34;],
-    )
-    url = self._endpoint + &#34;namespace&#34;
-    body = {&#34;name&#34;: name, **kwargs}
-    response = requests.post(url, json=body, headers=self._api_headers())
-    self._check_response(response)
-    # Call list_namespaces to refresh namespace cache
-    self.list_namespaces()</code></pre>
-</details>
+<dl>
+<dt><strong><code>name</code></strong> :&ensp;<code>str</code></dt>
+<dd>name of the namespace.</dd>
+<dt><strong><code>description</code></strong> :&ensp;<code>str</code>, optional</dt>
+<dd>description for this namespace.</dd>
+<dt><strong><code>url</code></strong> :&ensp;<code>str</code></dt>
+<dd>url of data store.</dd>
+<dt><strong><code>storage_options</code></strong> :&ensp;<code>dict</code>, optional</dt>
+<dd>storage options to be passed to Dask.</dd>
+<dt><strong><code>meta</code></strong> :&ensp;<code>dict</code>, optional</dt>
+<dd>key/value pairs of metadata.</dd>
+</dl></div>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/4335f7c438c19b73103620801eb4b6ddb8d0e78f/bytehub/cloud.py#L174-L185" class="git-link">Browse git</a></div>
 </dd>
 <dt id="bytehub.cloud.CloudFeatureStore.delete_feature"><code class="name flex">
 <span>def <span class="ident">delete_feature</span></span>(<span>self, name, namespace=None, delete_data=False)</span>
@@ -1078,29 +149,17 @@ meta, dict, optional: key/value pairs of metadata</p></div>
 <dd>
 <div class="desc"><p>Delete a feature from the feature store.</p>
 <h2 id="args">Args</h2>
-<p>name, str: name of feature to delete.
-namespace, str: namespace, if not included in feature name.
-delete_data, boolean, optional: if set to true will delete underlying stored data
+<dl>
+<dt><strong><code>name</code></strong> :&ensp;<code>str</code></dt>
+<dd>name of feature to delete.</dd>
+<dt><strong><code>namespace</code></strong> :&ensp;<code>str</code>, optional</dt>
+<dd>namespace, if not included in feature name.</dd>
+<dt><strong><code>delete_data</code></strong> :&ensp;<code>bool</code>, optional</dt>
+<dd>if set to <code>True</code> will delete underlying stored data
 for this feature, otherwise default behaviour is to delete the feature store
-metadata but leave the stored timeseries values intact</p></div>
-<details class="source">
-<summary>
-<span>Expand source code</span>
-</summary>
-<pre><code class="python">def delete_feature(self, name, namespace=None, delete_data=False):
-    url = self._endpoint + &#34;feature&#34;
-    response = requests.delete(
-        url,
-        json={&#34;name&#34;: name, &#34;namespace&#34;: namespace},
-        headers=self._api_headers(),
-    )
-    self._check_response(response)
-    # Delete data
-    if delete_data:
-        namespace, name = self.__class__._split_name(namespace, name)
-        ns = self._get(&#34;namespace&#34;, name=namespace)
-        ts.delete(name, ns[&#34;url&#34;], storage_options=ns[&#34;storage_options&#34;])</code></pre>
-</details>
+metadata but leave the stored timeseries values intact.</dd>
+</dl></div>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/4335f7c438c19b73103620801eb4b6ddb8d0e78f/bytehub/cloud.py#L288-L300" class="git-link">Browse git</a></div>
 </dd>
 <dt id="bytehub.cloud.CloudFeatureStore.delete_namespace"><code class="name flex">
 <span>def <span class="ident">delete_namespace</span></span>(<span>self, name)</span>
@@ -1112,43 +171,24 @@ metadata but leave the stored timeseries values intact</p></div>
 <dt><strong><code>name</code></strong></dt>
 <dd>namespace to be deleted.</dd>
 </dl></div>
-<details class="source">
-<summary>
-<span>Expand source code</span>
-</summary>
-<pre><code class="python">def delete_namespace(self, name):
-    if not self.list_features(namespace=name).empty:
-        raise RuntimeError(
-            f&#34;{name} still contains features: these must be deleted first&#34;
-        )
-    url = self._endpoint + &#34;namespace&#34;
-    response = requests.delete(
-        url, json={&#34;name&#34;: name}, headers=self._api_headers()
-    )
-    self._check_response(response)
-    # Call list_namespaces to refresh namespace cache
-    self.list_namespaces()</code></pre>
-</details>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/4335f7c438c19b73103620801eb4b6ddb8d0e78f/bytehub/cloud.py#L199-L210" class="git-link">Browse git</a></div>
 </dd>
 <dt id="bytehub.cloud.CloudFeatureStore.last"><code class="name flex">
 <span>def <span class="ident">last</span></span>(<span>self, features)</span>
 </code></dt>
 <dd>
-<div class="desc"><p>Fetch the last value of one or more features</p>
+<div class="desc"><p>Fetch the last value of one or more features.</p>
 <h2 id="args">Args</h2>
-<p>features, str, list, pd.DataFrame: feature or features to fetch</p>
+<dl>
+<dt><strong><code>features</code></strong> :&ensp;<code>Union[str, list, pd.DataFrame]</code></dt>
+<dd>feature or features to fetch.</dd>
+</dl>
 <h2 id="returns">Returns</h2>
 <dl>
 <dt><code>dict</code></dt>
-<dd>of name, value pairs</dd>
+<dd>dictionary of name, last value pairs.</dd>
 </dl></div>
-<details class="source">
-<summary>
-<span>Expand source code</span>
-</summary>
-<pre><code class="python">def last(self, features):
-    pass</code></pre>
-</details>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/4335f7c438c19b73103620801eb4b6ddb8d0e78f/bytehub/cloud.py#L445-L446" class="git-link">Browse git</a></div>
 </dd>
 <dt id="bytehub.cloud.CloudFeatureStore.list_features"><code class="name flex">
 <span>def <span class="ident">list_features</span></span>(<span>self, **kwargs)</span>
@@ -1157,26 +197,20 @@ metadata but leave the stored timeseries values intact</p></div>
 <div class="desc"><p>List features in the feature store.</p>
 <p>Search by namespace, name and/or regex query</p>
 <h2 id="args">Args</h2>
-<p>name, str, optional: name of feature to filter by.
-namespace, str, optional: namespace to filter by.
-regex, str, optional: regex filter on name.</p>
+<dl>
+<dt><strong><code>name</code></strong> :&ensp;<code>str</code>, optional</dt>
+<dd>name of feature to filter by.</dd>
+<dt><strong><code>namespace</code></strong> :&ensp;<code>str</code>, optional</dt>
+<dd>namespace to filter by.</dd>
+<dt><strong><code>regex</code></strong> :&ensp;<code>str</code>, optional</dt>
+<dd>regex filter on name.</dd>
+</dl>
 <h2 id="returns">Returns</h2>
 <dl>
 <dt><code>pd.DataFrame</code></dt>
 <dd>DataFrame of features and metadata.</dd>
 </dl></div>
-<details class="source">
-<summary>
-<span>Expand source code</span>
-</summary>
-<pre><code class="python">def list_features(self, **kwargs):
-    self.__class__._validate_kwargs(kwargs, valid=[&#34;name&#34;, &#34;namespace&#34;, &#34;regex&#34;])
-    url = self._endpoint + &#34;feature&#34;
-    response = requests.get(url, params=kwargs, headers=self._api_headers())
-    self._check_response(response)
-    df = pd.DataFrame(response.json())
-    return df</code></pre>
-</details>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/4335f7c438c19b73103620801eb4b6ddb8d0e78f/bytehub/cloud.py#L226-L232" class="git-link">Browse git</a></div>
 </dd>
 <dt id="bytehub.cloud.CloudFeatureStore.list_namespaces"><code class="name flex">
 <span>def <span class="ident">list_namespaces</span></span>(<span>self, **kwargs)</span>
@@ -1185,28 +219,20 @@ regex, str, optional: regex filter on name.</p>
 <div class="desc"><p>List namespaces in the feature store.</p>
 <p>Search by name or regex query.</p>
 <h2 id="args">Args</h2>
-<p>name, str, optional: name of namespace to filter by.
-namespace, str, optional: same as name.
-regex, str, optional: regex filter on name.</p>
+<dl>
+<dt><strong><code>name</code></strong> :&ensp;<code>str</code>, optional</dt>
+<dd>name of namespace to filter by.</dd>
+<dt><strong><code>namespace</code></strong> :&ensp;<code>str</code>, optional</dt>
+<dd>same as name.</dd>
+<dt><strong><code>regex</code></strong> :&ensp;<code>str</code>, optional</dt>
+<dd>regex filter on name.</dd>
+</dl>
 <h2 id="returns">Returns</h2>
 <dl>
 <dt><code>pd.DataFrame</code></dt>
 <dd>DataFrame of namespaces and metadata.</dd>
 </dl></div>
-<details class="source">
-<summary>
-<span>Expand source code</span>
-</summary>
-<pre><code class="python">def list_namespaces(self, **kwargs):
-    self.__class__._validate_kwargs(kwargs, [&#34;name&#34;, &#34;namespace&#34;, &#34;regex&#34;])
-    url = self._endpoint + &#34;namespace&#34;
-    response = requests.get(url, params=kwargs, headers=self._api_headers())
-    self._check_response(response)
-    df = pd.DataFrame(response.json())
-    # Cache the namespace for use when loading/saving dataframes
-    self._namespaces = df
-    return df</code></pre>
-</details>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/4335f7c438c19b73103620801eb4b6ddb8d0e78f/bytehub/cloud.py#L164-L172" class="git-link">Browse git</a></div>
 </dd>
 <dt id="bytehub.cloud.CloudFeatureStore.load_dataframe"><code class="name flex">
 <span>def <span class="ident">load_dataframe</span></span>(<span>self, features, from_date=None, to_date=None, freq=None, time_travel=None)</span>
@@ -1214,35 +240,25 @@ regex, str, optional: regex filter on name.</p>
 <dd>
 <div class="desc"><p>Load a DataFrame of feature values from the feature store.</p>
 <h2 id="args">Args</h2>
-<p>features, str, list, pd.DataFrame: name of feature to load, or list/DataFrame of feature namespaces/name
-from_date, datetime, optional: start date to load timeseries from, defaults to everything
-to_date, datetime, optional: end date to load timeseries to, defaults to everything
-freq, str, optional: frequency interval at which feature values should be sampled
-time_travel, str, optional: timedelta string, indicating that time-travel should be applied to the
-returned timeseries values, useful in forecasting applications</p>
+<dl>
+<dt><strong><code>features</code></strong> :&ensp;<code>Union[str, list, pd.DataFrame]</code></dt>
+<dd>name of feature to load, or list/DataFrame of feature namespaces/name.</dd>
+<dt><strong><code>from_date</code></strong> :&ensp;<code>datetime</code>, optional</dt>
+<dd>start date to load timeseries from, defaults to everything.</dd>
+<dt><strong><code>to_date</code></strong> :&ensp;<code>datetime</code>, optional</dt>
+<dd>end date to load timeseries to, defaults to everything.</dd>
+<dt><strong><code>freq</code></strong> :&ensp;<code>str</code>, optional</dt>
+<dd>frequency interval at which feature values should be sampled.</dd>
+<dt><strong><code>time_travel</code></strong> :&ensp;<code>str</code>, optional</dt>
+<dd>timedelta string, indicating that time-travel should be applied to the
+returned timeseries values, useful in forecasting applications.</dd>
+</dl>
 <h2 id="returns">Returns</h2>
-<p>pd.DataFrame or dask.DataFrame depending on which backend was specified in the feature store</p></div>
-<details class="source">
-<summary>
-<span>Expand source code</span>
-</summary>
-<pre><code class="python">def load_dataframe(
-    self,
-    features,
-    from_date=None,
-    to_date=None,
-    freq=None,
-    time_travel=None,
-):
-    dfs = []
-    # Load each requested feature
-    for f in self._unpack_list(features):
-        namespace, name = f
-        feature = self._get(&#34;feature&#34;, name=name, namespace=namespace)
-        df = self._load(feature, from_date, to_date, freq, time_travel)
-        dfs.append(df.rename(columns={&#34;value&#34;: f&#34;{namespace}/{name}&#34;}))
-    return ts.concat(dfs)</code></pre>
-</details>
+<dl>
+<dt><code>Union[pd.DataFrame, dask.DataFrame]</code></dt>
+<dd>depending on which backend was specified in the feature store.</dd>
+</dl></div>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/4335f7c438c19b73103620801eb4b6ddb8d0e78f/bytehub/cloud.py#L391-L406" class="git-link">Browse git</a></div>
 </dd>
 <dt id="bytehub.cloud.CloudFeatureStore.save_dataframe"><code class="name flex">
 <span>def <span class="ident">save_dataframe</span></span>(<span>self, df, name=None, namespace=None)</span>
@@ -1250,54 +266,19 @@ returned timeseries values, useful in forecasting applications</p>
 <dd>
 <div class="desc"><p>Save a DataFrame of feature values to the feature store.</p>
 <h2 id="args">Args</h2>
-<p>df, pd.DataFrame: DataFrame of feature values
-Must have a 'time' column or DateTimeIndex of time values
-Optionally include a 'created_time' (defaults to utcnow() if omitted)
-For a single feature a 'value' column, or column header of feature namespace/name
-For multiply features name the columns using namespace/name
-name, str, optional: Name of feature, if not included in DataFrame column name
-namespace, str, optional: Namespace, if not included in DataFrame column name</p></div>
-<details class="source">
-<summary>
-<span>Expand source code</span>
-</summary>
-<pre><code class="python">def save_dataframe(self, df, name=None, namespace=None):
-    # Check dataframe columns
-    feature_columns = df.columns.difference([&#34;time&#34;, &#34;created_time&#34;])
-    if len(feature_columns) == 1:
-        # Single feature to save
-        if feature_columns[0] == &#34;value&#34;:
-            if not name:
-                raise ValueError(&#34;Must specify feature name&#34;)
-        else:
-            name = feature_columns[0]
-            df = df.rename(columns={name: &#34;value&#34;})
-        feature = self._get(&#34;feature&#34;, namespace=namespace, name=name)
-        # Save data for this feature
-        namespace, name = self.__class__._split_name(namespace, name)
-        ns = self._get(&#34;namespace&#34;, name=namespace)
-        # Save individual feature
-        ts.save(
-            df,
-            name,
-            ns[&#34;url&#34;],
-            ns[&#34;storage_options&#34;],
-            partition=feature[&#34;partition&#34;],
-            serialized=feature[&#34;serialized&#34;],
-        )
-    else:
-        # Multiple features in column names
-        for feature_name in feature_columns:
-            namespace, name = self.__class__._split_name(namespace, feature_name)
-            if not self._exists(&#34;feature&#34;, namespace=namespace, name=name):
-                raise ValueError(
-                    f&#34;Feature named {name} does not exist in {namespace}&#34;
-                )
-        for feature_name in feature_columns:
-            # Save individual features
-            feature_df = df[[*df.columns.difference(feature_columns), feature_name]]
-            self.save_dataframe(feature_df)</code></pre>
-</details>
+<dl>
+<dt><strong><code>df</code></strong> :&ensp;<code>pd.DataFrame</code></dt>
+<dd>DataFrame of feature values.
+Must have a <code>time</code> column or DateTimeIndex of time values.
+Optionally include a <code>created_time</code> column (defaults to <code>utcnow()</code> if omitted).
+For a single feature: a <code>value</code> column, or column header of feature <code>namespace/name</code>.
+For multiple features name the columns using <code>namespace/name</code>.</dd>
+<dt><strong><code>name</code></strong> :&ensp;<code>str</code>, optional</dt>
+<dd>name of feature, if not included in DataFrame column name.</dd>
+<dt><strong><code>namespace</code></strong> :&ensp;<code>str</code>, optional</dt>
+<dd>namespace, if not included in DataFrame column name.</dd>
+</dl></div>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/4335f7c438c19b73103620801eb4b6ddb8d0e78f/bytehub/cloud.py#L408-L443" class="git-link">Browse git</a></div>
 </dd>
 <dt id="bytehub.cloud.CloudFeatureStore.transform"><code class="name flex">
 <span>def <span class="ident">transform</span></span>(<span>self, name, namespace=None, from_features=[])</span>
@@ -1307,43 +288,15 @@ namespace, str, optional: Namespace, if not included in DataFrame column name</p
 Use this on a function that accepts a dataframe input and returns an output dataframe
 of tranformed values.</p>
 <h2 id="args">Args</h2>
-<p>name, str: feature to update
-namespace, str: namespace, if not included in feature name
-from_features, list[str]: list of features which should be transformed by this one</p></div>
-<details class="source">
-<summary>
-<span>Expand source code</span>
-</summary>
-<pre><code class="python">def transform(self, name, namespace=None, from_features=[]):
-    def decorator(func):
-        # Create or update feature with transform
-        to_namespace, to_name = self._split_name(namespace=namespace, name=name)
-        computed_from = [f&#34;{ns}/{n}&#34; for ns, n in self._unpack_list(from_features)]
-        existing_features = self.list_features()
-        existing_features = existing_features.apply(
-            lambda x: x[&#34;namespace&#34;] + &#34;/&#34; + x[&#34;name&#34;], axis=1
-        ).tolist()
-        for feature in computed_from:
-            assert (
-                feature in existing_features
-            ), f&#34;{feature} does not exist in the feature store&#34;
-
-        transform = {&#34;function&#34;: func, &#34;args&#34;: computed_from}
-        payload = {&#34;transform&#34;: transform, &#34;description&#34;: func.__doc__}
-        if self._exists(&#34;feature&#34;, namespace=to_namespace, name=to_name):
-            # Already exists, update it
-            self.update_feature(to_name, namespace=to_namespace, **payload)
-        else:
-            # Create a new feature
-            self.create_feature(to_name, namespace=to_namespace, **payload)
-        # Call the transform
-        def wrapped_func(*args, **kwargs):
-            return func(*args, **kwargs)
-
-        return wrapped_func
-
-    return decorator</code></pre>
-</details>
+<dl>
+<dt><strong><code>name</code></strong> :&ensp;<code>str</code></dt>
+<dd>feature to update.</dd>
+<dt><strong><code>namespace</code></strong> :&ensp;<code>str</code>, optional</dt>
+<dd>namespace, if not included in feature name.</dd>
+<dt><strong><code>from_features</code></strong> :&ensp;<code>list</code></dt>
+<dd>list of features which should be transformed by this one</dd>
+</dl></div>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/4335f7c438c19b73103620801eb4b6ddb8d0e78f/bytehub/cloud.py#L312-L340" class="git-link">Browse git</a></div>
 </dd>
 <dt id="bytehub.cloud.CloudFeatureStore.update_feature"><code class="name flex">
 <span>def <span class="ident">update_feature</span></span>(<span>self, name, namespace=None, **kwargs)</span>
@@ -1352,27 +305,19 @@ from_features, list[str]: list of features which should be transformed by this o
 <div class="desc"><p>Update a namespace in the feature store.</p>
 <h2 id="args">Args</h2>
 <dl>
-<dt>name, str: feature to update</dt>
-<dt>namespace, str: namespace, if not included in feature name</dt>
-<dt>description, str, optional: updated description</dt>
-<dt><strong><code>transform</code></strong></dt>
-<dd>str, optional: pickled function code for feature transforms</dd>
-</dl>
-<p>meta, dict, optional: updated key/value pairs of metadata</p></div>
-<details class="source">
-<summary>
-<span>Expand source code</span>
-</summary>
-<pre><code class="python">def update_feature(self, name, namespace=None, **kwargs):
-    self.__class__._validate_kwargs(
-        kwargs,
-        valid=[&#34;description&#34;, &#34;meta&#34;, &#34;transform&#34;],
-    )
-    url = self._endpoint + &#34;feature&#34;
-    body = {&#34;name&#34;: name, &#34;namespace&#34;: namespace, **kwargs}
-    response = requests.patch(url, json=body, headers=self._api_headers())
-    self._check_response(response)</code></pre>
-</details>
+<dt><strong><code>name</code></strong> :&ensp;<code>str</code></dt>
+<dd>feature to update.</dd>
+<dt><strong><code>namespace</code></strong> :&ensp;<code>str</code>, optional</dt>
+<dd>namespace, if not included in feature name.</dd>
+<dt><strong><code>description</code></strong> :&ensp;<code>str</code>, optional</dt>
+<dd>updated description.</dd>
+<dt><strong><code>transform</code></strong> :&ensp;<code>str</code>, optional</dt>
+<dd>pickled function code for feature transforms.</dd>
+<dt><strong><code>meta</code></strong> :&ensp;<code>dict</code>, optional</dt>
+<dd>updated key/value pairs of metadata.
+To remove metadata, update using <code>{"key_to_remove": None}</code>.</dd>
+</dl></div>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/4335f7c438c19b73103620801eb4b6ddb8d0e78f/bytehub/cloud.py#L302-L310" class="git-link">Browse git</a></div>
 </dd>
 <dt id="bytehub.cloud.CloudFeatureStore.update_namespace"><code class="name flex">
 <span>def <span class="ident">update_namespace</span></span>(<span>self, name, **kwargs)</span>
@@ -1380,26 +325,18 @@ from_features, list[str]: list of features which should be transformed by this o
 <dd>
 <div class="desc"><p>Update a namespace in the feature store.</p>
 <h2 id="args">Args</h2>
-<p>name, str: namespace to update
-description, str, optional: updated description
-storage_options, dict, optional: updated storage_options
-meta, dict, optional: updated key/value pairs of metadata</p></div>
-<details class="source">
-<summary>
-<span>Expand source code</span>
-</summary>
-<pre><code class="python">def update_namespace(self, name, **kwargs):
-    self.__class__._validate_kwargs(
-        kwargs,
-        valid=[&#34;description&#34;, &#34;storage_options&#34;, &#34;meta&#34;],
-    )
-    url = self._endpoint + &#34;namespace&#34;
-    body = {&#34;name&#34;: name, **kwargs}
-    response = requests.patch(url, json=body, headers=self._api_headers())
-    self._check_response(response)
-    # Call list_namespaces to refresh namespace cache
-    self.list_namespaces()</code></pre>
-</details>
+<dl>
+<dt><strong><code>name</code></strong> :&ensp;<code>str</code></dt>
+<dd>namespace to update.</dd>
+<dt><strong><code>description</code></strong> :&ensp;<code>str</code>, optional</dt>
+<dd>updated description.</dd>
+<dt><strong><code>storage_options</code></strong> :&ensp;<code>dict</code>, optional</dt>
+<dd>updated storage options.</dd>
+<dt><strong><code>meta</code></strong> :&ensp;<code>dict</code>, optional</dt>
+<dd>updated key/value pairs of metadata.
+To remove metadata, update using <code>{"key_to_remove": None}</code>.</dd>
+</dl></div>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/4335f7c438c19b73103620801eb4b6ddb8d0e78f/bytehub/cloud.py#L187-L197" class="git-link">Browse git</a></div>
 </dd>
 </dl>
 </dd>

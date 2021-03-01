@@ -34,15 +34,15 @@ def FeatureStore(connection_string="sqlite:///bytehub.db", backend="pandas", **k
     """Factory method to create Feature Store objects.
 
     Args:
-        connection_string, str: SQLAlchemy connection string for database
-            containing feature store metadata - defaults to local sqlite file
-            or an HTTPS endpoint to a cloud-hosted feature store
-        backend, str: either 'pandas' (default) or 'dask', specifying the type
-            of dataframes returned by load_dataframe
-        **kwargs: Additional options to be passed to the Feature Store constructor
+        connection_string (str): SQLAlchemy connection string for database
+            containing feature store metadata (defaults to local sqlite file)
+            or an HTTPS endpoint to a cloud-hosted feature store.
+        backend (str): either `"pandas"` (default) or `"dask"`, specifying the type
+                of dataframes returned by `load_dataframe`.
+        **kwargs: Additional options to be passed to the Feature Store constructor.
 
     Returns:
-        CoreFeatureStore or CloudFeatureStore object
+        Union[CoreFeatureStore, CloudFeatureStore]: Feature Store object.
     """
     if connection_string.startswith("http"):
         # Connect to cloud-hosted feature store

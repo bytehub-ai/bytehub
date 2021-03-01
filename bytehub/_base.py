@@ -68,9 +68,9 @@ class BaseFeatureStore(ABC):
         Search by name or regex query.
 
         Args:
-            name, str, optional: name of namespace to filter by.
-            namespace, str, optional: same as name.
-            regex, str, optional: regex filter on name.
+            name (str, optional): name of namespace to filter by.
+            namespace (str, optional): same as name.
+            regex (str, optional): regex filter on name.
 
         Returns:
             pd.DataFrame: DataFrame of namespaces and metadata.
@@ -81,11 +81,11 @@ class BaseFeatureStore(ABC):
         """Create a new namespace in the feature store.
 
         Args:
-            name, str: name of the namespace
-            description, str, optional: description for this namespace
-            url, str: url of data store
-            storage_options, dict, optional: storage options to be passed to Dask
-            meta, dict, optional: key/value pairs of metadata
+            name (str): name of the namespace.
+            description (str, optional): description for this namespace.
+            url (str): url of data store.
+            storage_options (dict, optional): storage options to be passed to Dask.
+            meta (dict, optional): key/value pairs of metadata.
         """
         raise NotImplementedError()
 
@@ -93,10 +93,11 @@ class BaseFeatureStore(ABC):
         """Update a namespace in the feature store.
 
         Args:
-            name, str: namespace to update
-            description, str, optional: updated description
-            storage_options, dict, optional: updated storage_options
-            meta, dict, optional: updated key/value pairs of metadata
+            name (str): namespace to update.
+            description (str, optional): updated description.
+            storage_options (dict, optional): updated storage options.
+            meta (dict, optional): updated key/value pairs of metadata.
+                To remove metadata, update using `{"key_to_remove": None}`.
         """
         raise NotImplementedError()
 
@@ -113,7 +114,7 @@ class BaseFeatureStore(ABC):
         Run this to free up disk space after deleting features
 
         Args:
-            name:, str: namespace to clean
+            name (str): namespace to clean
         """
         raise NotImplementedError()
 
@@ -123,9 +124,9 @@ class BaseFeatureStore(ABC):
         Search by namespace, name and/or regex query
 
         Args:
-            name, str, optional: name of feature to filter by.
-            namespace, str, optional: namespace to filter by.
-            regex, str, optional: regex filter on name.
+            name (str, optional): name of feature to filter by.
+            namespace (str, optional): namespace to filter by.
+            regex (str, optional): regex filter on name.
 
         Returns:
             pd.DataFrame: DataFrame of features and metadata.
@@ -136,15 +137,15 @@ class BaseFeatureStore(ABC):
         """Create a new feature in the feature store.
 
         Args:
-            name, str: name of the feature
-            namespace, str, optional: namespace which should hold this feature
-            description, str, optional: description for this namespace
-            partition, str, optional: partitioning of stored timeseries (default: 'date')
-            serialized, bool, optional: if True, converts values to JSON strings before saving,
+            name (str): name of the feature
+            namespace (str, optional): namespace which should hold this feature.
+            description (str, optional): description for this namespace.
+            partition (str, optional): partitioning of stored timeseries (default: `"date"`).
+            serialized (bool, optional): if `True`, converts values to JSON strings before saving,
                 which can help in situations where the format/schema of the data changes
-                over time
-            transform: str, optional: pickled function code for feature transforms
-            meta, dict, optional: key/value pairs of metadata
+                over time.
+            transform (str, optional): pickled function code for feature transforms.
+            meta (dict, optional): key/value pairs of metadata.
         """
         raise NotImplementedError()
 
@@ -152,10 +153,10 @@ class BaseFeatureStore(ABC):
         """Create a new feature by cloning an existing one.
 
         Args:
-            name, str: name of the feature
-            namespace, str, optional: namespace which should hold this feature
-            from_name, str: the name of the existing feature to copy from
-            from_namespace, str, optional: namespace of the existing feature
+            name (str): name of the feature.
+            namespace (str, optional): namespace which should hold this feature.
+            from_name (str): the name of the existing feature to copy from.
+            from_namespace (str, optional): namespace of the existing feature.
         """
         raise NotImplementedError()
 
@@ -163,11 +164,11 @@ class BaseFeatureStore(ABC):
         """Delete a feature from the feature store.
 
         Args:
-            name, str: name of feature to delete.
-            namespace, str: namespace, if not included in feature name.
-            delete_data, boolean, optional: if set to true will delete underlying stored data
+            name (str): name of feature to delete.
+            namespace (str, optional): namespace, if not included in feature name.
+            delete_data (bool, optional): if set to `True` will delete underlying stored data
                 for this feature, otherwise default behaviour is to delete the feature store
-                metadata but leave the stored timeseries values intact
+                metadata but leave the stored timeseries values intact.
         """
         raise NotImplementedError()
 
@@ -175,11 +176,12 @@ class BaseFeatureStore(ABC):
         """Update a namespace in the feature store.
 
         Args:
-            name, str: feature to update
-            namespace, str: namespace, if not included in feature name
-            description, str, optional: updated description
-            transform: str, optional: pickled function code for feature transforms
-            meta, dict, optional: updated key/value pairs of metadata
+            name (str): feature to update.
+            namespace (str, optional): namespace, if not included in feature name.
+            description (str, optional): updated description.
+            transform (str, optional): pickled function code for feature transforms.
+            meta (dict, optional): updated key/value pairs of metadata.
+                To remove metadata, update using `{"key_to_remove": None}`.
         """
         raise NotImplementedError()
 
@@ -189,9 +191,9 @@ class BaseFeatureStore(ABC):
         of tranformed values.
 
         Args:
-            name, str: feature to update
-            namespace, str: namespace, if not included in feature name
-            from_features, list[str]: list of features which should be transformed by this one
+            name (str): feature to update.
+            namespace (str, optional): namespace, if not included in feature name.
+            from_features (list): list of features which should be transformed by this one
         """
         raise NotImplementedError()
 
@@ -206,15 +208,15 @@ class BaseFeatureStore(ABC):
         """Load a DataFrame of feature values from the feature store.
 
         Args:
-            features, str, list, pd.DataFrame: name of feature to load, or list/DataFrame of feature namespaces/name
-            from_date, datetime, optional: start date to load timeseries from, defaults to everything
-            to_date, datetime, optional: end date to load timeseries to, defaults to everything
-            freq, str, optional: frequency interval at which feature values should be sampled
-            time_travel, str, optional: timedelta string, indicating that time-travel should be applied to the
-                returned timeseries values, useful in forecasting applications
+            features (Union[str, list, pd.DataFrame]): name of feature to load, or list/DataFrame of feature namespaces/name.
+            from_date (datetime, optional): start date to load timeseries from, defaults to everything.
+            to_date (datetime, optional): end date to load timeseries to, defaults to everything.
+            freq (str, optional): frequency interval at which feature values should be sampled.
+            time_travel (str, optional): timedelta string, indicating that time-travel should be applied to the
+                returned timeseries values, useful in forecasting applications.
 
         Returns:
-            pd.DataFrame or dask.DataFrame depending on which backend was specified in the feature store
+            Union[pd.DataFrame, dask.DataFrame]: depending on which backend was specified in the feature store.
         """
         raise NotImplementedError()
 
@@ -222,24 +224,24 @@ class BaseFeatureStore(ABC):
         """Save a DataFrame of feature values to the feature store.
 
         Args:
-            df, pd.DataFrame: DataFrame of feature values
-                Must have a 'time' column or DateTimeIndex of time values
-                Optionally include a 'created_time' (defaults to utcnow() if omitted)
-                For a single feature a 'value' column, or column header of feature namespace/name
-                For multiply features name the columns using namespace/name
-            name, str, optional: Name of feature, if not included in DataFrame column name
-            namespace, str, optional: Namespace, if not included in DataFrame column name
+            df (pd.DataFrame): DataFrame of feature values.
+                Must have a `time` column or DateTimeIndex of time values.
+                Optionally include a `created_time` column (defaults to `utcnow()` if omitted).
+                For a single feature: a `value` column, or column header of feature `namespace/name`.
+                For multiple features name the columns using `namespace/name`.
+            name (str, optional): name of feature, if not included in DataFrame column name.
+            namespace (str, optional): namespace, if not included in DataFrame column name.
         """
         raise NotImplementedError()
 
     def last(self, features):
-        """Fetch the last value of one or more features
+        """Fetch the last value of one or more features.
 
         Args:
-            features, str, list, pd.DataFrame: feature or features to fetch
+            features (Union[str, list, pd.DataFrame]): feature or features to fetch.
 
         Returns:
-            dict: of name, value pairs
+            dict: dictionary of name, last value pairs.
         """
         raise NotImplementedError()
 

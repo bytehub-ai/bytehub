@@ -15,8 +15,15 @@ except ImportError:
 
 
 class CoreFeatureStore(BaseFeatureStore):
-    """Core Feature Store
+    """**Core Feature Store**
+
     Connects directly to a SQLAlchemy-compatible database.
+
+    When using specifying features
+    for `create_feature`, `update_feature`, etc., use either:
+
+    * `namespace` and `name` as arguments; or
+    * specify `name` in the format `"my-namespace/my-feature"`.
     """
 
     def __init__(
@@ -25,15 +32,14 @@ class CoreFeatureStore(BaseFeatureStore):
         backend="pandas",
         connect_args={},
     ):
-        """Create a Feature Store, or connect to an existing one
-
+        """
         Args:
-            connection_string, str: SQLAlchemy connection string for database
-                containing feature store metadata - defaults to local sqlite file
-            backend, str: either 'pandas' (default) or 'dask', specifying the type
-                of dataframes returned by load_dataframe
-            connect_args, dict: optional dictionary of connection arguments to pass
-                to SQLAlchemy
+            connection_string (str): SQLAlchemy connection string for database
+                containing feature store metadata - defaults to local sqlite file.
+            backend (str, optional): either `"pandas"` (default) or `"dask"`, specifying the type
+                of dataframes returned by `load_dataframe`.
+            connect_args (dict, optional): dictionary of [connection arguments](https://docs.sqlalchemy.org/en/14/core/engines.html#sqlalchemy.create_engine.params.connect_args)
+                to pass to SQLAlchemy.
         """
         self.engine, self.session_maker = conn.connect(
             connection_string, connect_args=connect_args

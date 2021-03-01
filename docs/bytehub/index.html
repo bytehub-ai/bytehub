@@ -42,67 +42,7 @@ fs = bh.FeatureStore()
 <pre><code>fs = bh.CloudFeatureStore()
 </code></pre>
 <p>See <a href="https://docs.bytehub.ai">https://docs.bytehub.ai</a> for examples and tutorials.</p>
-<details class="source">
-<summary>
-<span>Expand source code</span>
-</summary>
-<pre><code class="python">&#34;&#34;&#34;
-ByteHub provides an easy-to-use Feature Store, optimised for time-series data.
-It requires no complex infrastructure setup, and can be run locally, connected to
-a remote database/file storage, or run in a cloud-hosted mode.
-ByteHub uses Dask for data storage, allowing it to be scaled to large datasets and
-cluster compute environments.
-
-Exammple usage for a local SQLite feature store:
-
-    import bytehub as bh
-    fs = bh.FeatureStore()
-
-Remote feature stores can be accessed using a SQLAlchemy connection string, e.g.:
-
-    fs = bh.FeatureStore(&#39;postgresql+psycopg2://user:pass@host:port/bytehub&#39;)
-
-Cloud-hosted feature stores can be accessed via a REST API endpoint:
-
-    fs = bh.FeatureStore(&#39;https://api.bytehub.ai/&#39;)
-
-or simply use the following to access ByteHub&#39;s cloud service:
-
-    fs = bh.CloudFeatureStore()
-
-See [https://docs.bytehub.ai](https://docs.bytehub.ai) for examples and tutorials.
-
-&#34;&#34;&#34;
-from .core import CoreFeatureStore
-from .cloud import CloudFeatureStore
-from ._version import __version__
-
-
-def FeatureStore(connection_string=&#34;sqlite:///bytehub.db&#34;, backend=&#34;pandas&#34;, **kwargs):
-    &#34;&#34;&#34;Factory method to create Feature Store objects.
-
-    Args:
-        connection_string, str: SQLAlchemy connection string for database
-            containing feature store metadata - defaults to local sqlite file
-            or an HTTPS endpoint to a cloud-hosted feature store
-        backend, str: either &#39;pandas&#39; (default) or &#39;dask&#39;, specifying the type
-            of dataframes returned by load_dataframe
-        **kwargs: Additional options to be passed to the Feature Store constructor
-
-    Returns:
-        CoreFeatureStore or CloudFeatureStore object
-    &#34;&#34;&#34;
-    if connection_string.startswith(&#34;http&#34;):
-        # Connect to cloud-hosted feature store
-        return CloudFeatureStore(
-            connection_string=connection_string, backend=backend, **kwargs
-        )
-    else:
-        # Direct connection to database using CoreFeatureStore
-        return CoreFeatureStore(
-            connection_string=connection_string, backend=backend, **kwargs
-        )</code></pre>
-</details>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/4335f7c438c19b73103620801eb4b6ddb8d0e78f/bytehub/__init__.py#L0-L55" class="git-link">Browse git</a></div>
 </section>
 <section>
 <h2 class="section-title" id="header-submodules">Sub-modules</h2>
@@ -129,45 +69,22 @@ def FeatureStore(connection_string=&#34;sqlite:///bytehub.db&#34;, backend=&#34;
 <div class="desc"><p>Factory method to create Feature Store objects.</p>
 <h2 id="args">Args</h2>
 <dl>
-<dt>connection_string, str: SQLAlchemy connection string for database</dt>
-<dt>containing feature store metadata - defaults to local sqlite file</dt>
-<dt>or an HTTPS endpoint to a cloud-hosted feature store</dt>
-<dt>backend, str: either 'pandas' (default) or 'dask', specifying the type</dt>
-<dt>of dataframes returned by load_dataframe</dt>
+<dt><strong><code>connection_string</code></strong> :&ensp;<code>str</code></dt>
+<dd>SQLAlchemy connection string for database
+containing feature store metadata (defaults to local sqlite file)
+or an HTTPS endpoint to a cloud-hosted feature store.</dd>
+<dt><strong><code>backend</code></strong> :&ensp;<code>str</code></dt>
+<dd>either <code>"pandas"</code> (default) or <code>"dask"</code>, specifying the type
+of dataframes returned by <code>load_dataframe</code>.</dd>
 <dt><strong><code>**kwargs</code></strong></dt>
-<dd>Additional options to be passed to the Feature Store constructor</dd>
+<dd>Additional options to be passed to the Feature Store constructor.</dd>
 </dl>
 <h2 id="returns">Returns</h2>
-<p>CoreFeatureStore or CloudFeatureStore object</p></div>
-<details class="source">
-<summary>
-<span>Expand source code</span>
-</summary>
-<pre><code class="python">def FeatureStore(connection_string=&#34;sqlite:///bytehub.db&#34;, backend=&#34;pandas&#34;, **kwargs):
-    &#34;&#34;&#34;Factory method to create Feature Store objects.
-
-    Args:
-        connection_string, str: SQLAlchemy connection string for database
-            containing feature store metadata - defaults to local sqlite file
-            or an HTTPS endpoint to a cloud-hosted feature store
-        backend, str: either &#39;pandas&#39; (default) or &#39;dask&#39;, specifying the type
-            of dataframes returned by load_dataframe
-        **kwargs: Additional options to be passed to the Feature Store constructor
-
-    Returns:
-        CoreFeatureStore or CloudFeatureStore object
-    &#34;&#34;&#34;
-    if connection_string.startswith(&#34;http&#34;):
-        # Connect to cloud-hosted feature store
-        return CloudFeatureStore(
-            connection_string=connection_string, backend=backend, **kwargs
-        )
-    else:
-        # Direct connection to database using CoreFeatureStore
-        return CoreFeatureStore(
-            connection_string=connection_string, backend=backend, **kwargs
-        )</code></pre>
-</details>
+<dl>
+<dt><code>Union[CoreFeatureStore, CloudFeatureStore]</code></dt>
+<dd>Feature Store object.</dd>
+</dl></div>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/4335f7c438c19b73103620801eb4b6ddb8d0e78f/bytehub/__init__.py#L33-L56" class="git-link">Browse git</a></div>
 </dd>
 </dl>
 </section>

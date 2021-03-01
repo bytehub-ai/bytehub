@@ -16,8 +16,15 @@ except ImportError:
 
 
 class CloudFeatureStore(BaseFeatureStore):
-    """Cloud Feature Store
+    """**Cloud Feature Store**
+
     Connects to a hosted feature store via REST API.
+
+    When using specifying features
+    for `create_feature`, `update_feature`, etc., use either:
+
+    * `namespace` and `name` as arguments; or
+    * specify `name` in the format `"my-namespace/my-feature"`.
     """
 
     def __init__(
@@ -26,14 +33,14 @@ class CloudFeatureStore(BaseFeatureStore):
         backend="pandas",
         enable_transforms=False,
     ):
-        """Connect to a cloud-hosted feature store
-
+        """
         Args:
-            connection_string, str: URL of ByteHub Cloud, e.g. https://api.bytehub.ai
-            backend, str: either 'pandas' (default) or 'dask', specifying the type
-                of dataframes returned by load_dataframe
-            enable_transforms, bool: whether to allow execution of pickled functions
-                stored in the feature store - only enable if you trust the store
+            connection_string (str): URL of ByteHub Cloud, e.g. [https://api.bytehub.ai](https://api.bytehub.ai).
+            backend (str, optional): either `"pandas"` (default) or `"dask"`, specifying the type
+                of dataframes returned by `load_dataframe`.
+            enable_transforms (bool, optional): whether to allow execution of pickled functions
+                stored in the feature store. Required for feature transforms, but should only be enabled
+                if you trust the feature store and the transforms that have been saved to it.
         """
         if backend.lower() not in ["pandas", "dask"]:
             raise ValueError("Backend must be either pandas or dask")
