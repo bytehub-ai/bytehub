@@ -95,7 +95,7 @@ df_query = fs.load_dataframe(
 )
 ```
 
-To connect to ByteHub Cloud, use:
+To connect to ByteHub Cloud, first [register for an account](https://www.bytehub.ai/feature-store/request-access), then use:
 
 ```python
 fs = bh.FeatureStore("https://api.bytehub.ai")
