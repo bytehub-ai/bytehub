@@ -29,6 +29,8 @@ It is built on [Dask](https://dask.org/) to support large datasets and cluster c
 * **Time travel** can retrieve feature values based on when they were created, which can be useful for forecasting applications.
 * Simple APIs to retrieve timeseries dataframes for training, or a dictionary of the most recent feature values, which can be used for inference.
 
+Also available as **[☁️ ByteHub Cloud](https://bytehub.ai)**: a ready-to-use, cloud-hosted feature store.
+
 ## 📖 Documentation and tutorials
 
 See the [ByteHub documentation](https://docs.bytehub.ai/) and [notebook tutorials](https://github.com/bytehub-ai/code-examples/tree/main/tutorials) to learn more and get started.
@@ -37,47 +39,69 @@ See the [ByteHub documentation](https://docs.bytehub.ai/) and [notebook tutorial
 
 Install using pip:
 
-    pip install bytehub
+```sh
+pip install bytehub
+```
 
 Create a local SQLite feature store by running:
 
-    import bytehub as bh
-    import pandas as pd
+```python
+import bytehub as bh
+import pandas as pd
 
-    fs = bh.FeatureStore()
+fs = bh.FeatureStore()
+```
 
 Data lives inside _namespaces_ within each feature store. They can be used to separate projects or environments. Create a namespace as follows:
 
-    fs.create_namespace(
-        'tutorial', url='/tmp/featurestore/tutorial', description='Tutorial datasets'
-    )
+```python
+fs.create_namespace(
+    'tutorial', url='/tmp/featurestore/tutorial', description='Tutorial datasets'
+)
+```
 
 Create a _feature_ inside this namespace which will be used to store a timeseries of pre-prepared data:
 
-    fs.create_feature('tutorial/numbers', description='Timeseries of numbers')
+```python
+fs.create_feature('tutorial/numbers', description='Timeseries of numbers')
+```
 
 Now save some data into the feature store:
 
-    dts = pd.date_range('2020-01-01', '2021-02-09')
-    df = pd.DataFrame({'time': dts, 'value': list(range(len(dts)))})
+```python
+dts = pd.date_range('2020-01-01', '2021-02-09')
+df = pd.DataFrame({'time': dts, 'value': list(range(len(dts)))})
 
-    fs.save_dataframe(df, 'tutorial/numbers')
+fs.save_dataframe(df, 'tutorial/numbers')
+```
 
 The data is now stored, ready to be transformed, resampled, merged with other data, and fed to machine-learning models.
 
 We can engineer new features from existing ones using the _transform_ decorator. Suppose we want to define a new feature that contains the squared values of `tutorial/numbers`:
 
-    @fs.transform('tutorial/squared', from_features=['tutorial/numbers'])
-    def squared_numbers(df):
-        # This transform function receives dataframe input, and defines a transform operation
-        return df ** 2 # Square the input
+```python
+@fs.transform('tutorial/squared', from_features=['tutorial/numbers'])
+def squared_numbers(df):
+    # This transform function receives dataframe input, and defines a transform operation
+    return df ** 2 # Square the input
+```
 
 Now both features are saved in the feature store, and can be queried using:
 
-    df_query = fs.load_dataframe(
-        ['tutorial/numbers', 'tutorial/squared'],
-        from_date='2021-01-01', to_date='2021-01-31'
-    )
+```python
+df_query = fs.load_dataframe(
+    ['tutorial/numbers', 'tutorial/squared'],
+    from_date='2021-01-01', to_date='2021-01-31'
+)
+```
+
+To connect to ByteHub Cloud, use:
+
+```python
+fs = bh.FeatureStore("https://api.bytehub.ai")
+```
+
+This will allow you to store features in your own private namespace on ByteHub Cloud, and save datasets to an AWS S3 storage bucket.
 
 ## 🐾 Roadmap
 
