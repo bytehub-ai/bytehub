@@ -16,7 +16,7 @@ def random_string(n):
 
 class TestFeatureStore:
     def setup_class(self):
-        print("Starting tests: creating feature store")
+        print("Starting tests: local feature store")
         # Creating feature store
         self.file_name = random_string(10)
         self.location = "/tmp"
@@ -265,9 +265,6 @@ class TestFeatureStore:
         assert feature.serialized == True
         # Check that data was copied
         result = fs.load_dataframe("test/cloned-feature")
-        print(result.head())
-        print(df1.rename(columns={"value": "test/cloned-feature"}))
-        print(len(df1), len(result))
         assert result.equals(df1.rename(columns={"value": "test/cloned-feature"}))
 
         fs.delete_feature("test/old-feature")
@@ -616,7 +613,7 @@ class TestFeatureStore:
             "test/combined-feature",
             from_features=["test/raw-feature", "test/squared-feature"],
         )
-        def square(df):
+        def add(df):
             return df["test/raw-feature"] + df["test/squared-feature"]
 
         # Get transformed features
