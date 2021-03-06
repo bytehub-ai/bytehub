@@ -123,7 +123,12 @@ class Feature(Base, FeatureStoreMixin):
     def validate_transform(self, key, value):
         if not value:
             return value
-        if not isinstance(value.get("function"), types.FunctionType):
+        if isinstance(value.get("function"), str):
+            # Function already serialized, no conversion required
+            func = value.get("function")
+        elif isinstance(value.get("function"), types.FunctionType):
+            func = utils.serialize(value["function"])
+        else:
             raise ValueError(
                 "Transform must be a Python function, accepting a single dataframe input"
             )
@@ -132,7 +137,7 @@ class Feature(Base, FeatureStoreMixin):
         # Convert function to base64/cloudpickle format
         return {
             "format": "cloudpickle",
-            "function": utils.serialize(value["function"]),
+            "function": func,
             "args": value["args"],
         }
 
@@ -147,6 +152,7 @@ class Feature(Base, FeatureStoreMixin):
         payload = other.as_dict()
         payload.pop("namespace")
         payload.pop("name")
+        payload.pop("version")
         clone.update_from_dict(payload)
         return clone
 

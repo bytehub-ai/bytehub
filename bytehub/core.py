@@ -49,7 +49,7 @@ class CoreFeatureStore(BaseFeatureStore):
         self.mode = backend.lower()
         model.Base.metadata.create_all(self.engine)
 
-    def _list(self, cls, namespace=None, name=None, regex=None):
+    def _list(self, cls, namespace=None, name=None, regex=None, friendly=True):
         namespace, name = self.__class__._split_name(namespace, name)
         with conn.session_scope(self.session_maker) as session:
             r = session.query(cls)
@@ -67,7 +67,7 @@ class CoreFeatureStore(BaseFeatureStore):
             if regex:
                 df = df[df.name.str.contains(regex)]
             # List transforms as simple true/false
-            if "transform" in df.columns:
+            if "transform" in df.columns and friendly:
                 df = df.assign(transform=df["transform"].apply(lambda x: x is not None))
             # Sort the columns
             column_order = ["namespace", "name", "version", "description", "meta"]
@@ -165,12 +165,15 @@ class CoreFeatureStore(BaseFeatureStore):
             namespace.clean()
 
     def list_features(self, **kwargs):
-        self.__class__._validate_kwargs(kwargs, valid=["name", "namespace", "regex"])
+        self.__class__._validate_kwargs(
+            kwargs, valid=["name", "namespace", "regex", "friendly"]
+        )
         return self._list(
             model.Feature,
             namespace=kwargs.get("namespace"),
             name=kwargs.get("name"),
             regex=kwargs.get("regex"),
+            friendly=kwargs.get("friendly", True),
         )
 
     def create_feature(self, name, namespace=None, **kwargs):

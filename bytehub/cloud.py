@@ -3,9 +3,11 @@ import posixpath
 from getpass import getpass
 import time
 import os
-import json
+from pandas.io import json
 from ._base import BaseFeatureStore
 from . import _timeseries as ts
+from . import _utils as utils
+
 
 try:
     # Allow for a minimal install with no requests
@@ -60,7 +62,8 @@ class CloudFeatureStore(BaseFeatureStore):
         if os.environ.get("BYTEHUB_TOKEN"):
             # Non-interactive login using refresh token
             oauth = OAuth2Session(
-                self.client_id, token={"refresh_token": os.environ.get("BYTEHUB_TOKEN")}
+                self._client_id,
+                token={"refresh_token": os.environ.get("BYTEHUB_TOKEN")},
             )
             tokens = oauth.refresh_token(
                 self._urls["token_url"],
@@ -118,6 +121,7 @@ class CloudFeatureStore(BaseFeatureStore):
         self._check_tokens()
         return {
             "Authorization": self._tokens["access_token"],
+            "Content-Type": "application/json",
         }
 
     def _refresh(self, name=None):
@@ -148,7 +152,9 @@ class CloudFeatureStore(BaseFeatureStore):
     def _get(self, entity, **kwargs):
         if entity.lower() == "feature":
             ls = self.list_features(
-                namespace=kwargs.get("namespace"), name=kwargs.get("name")
+                namespace=kwargs.get("namespace"),
+                name=kwargs.get("name"),
+                friendly=False,
             )
         elif entity.lower() == "namespace":
             self._refresh(name=kwargs.get("name", kwargs.get("namespace")))
@@ -167,6 +173,18 @@ class CloudFeatureStore(BaseFeatureStore):
         response = requests.get(url, params=kwargs, headers=self._api_headers())
         self._check_response(response)
         df = pd.DataFrame(response.json())
+        if df.empty:
+            df = pd.DataFrame(
+                columns=[
+                    "namespace",
+                    "name",
+                    "version",
+                    "description",
+                    "meta",
+                    "url",
+                    "storage_options",
+                ]
+            )
         # Cache the namespace for use when loading/saving dataframes
         self._namespaces = df
         return df
@@ -179,7 +197,9 @@ class CloudFeatureStore(BaseFeatureStore):
         )
         url = self._endpoint + "namespace"
         body = {"name": name, **kwargs}
-        response = requests.post(url, json=body, headers=self._api_headers())
+        response = requests.post(
+            url, data=json.dumps(body), headers=self._api_headers()
+        )
         self._check_response(response)
         # Call list_namespaces to refresh namespace cache
         self.list_namespaces()
@@ -191,7 +211,9 @@ class CloudFeatureStore(BaseFeatureStore):
         )
         url = self._endpoint + "namespace"
         body = {"name": name, **kwargs}
-        response = requests.patch(url, json=body, headers=self._api_headers())
+        response = requests.patch(
+            url, data=json.dumps(body), headers=self._api_headers()
+        )
         self._check_response(response)
         # Call list_namespaces to refresh namespace cache
         self.list_namespaces()
@@ -216,7 +238,7 @@ class CloudFeatureStore(BaseFeatureStore):
         # Check for unused data and remove it
         feature_paths = ts.feature_paths(ns["url"], ns["storage_options"])
         active_feature_names = self.list_features(namespace=name)
-        active_feature_names = active_feature_names.name.tolist()
+        active_feature_names = active_feature_names["name"].tolist()
         feature_data = [f.split("/")[-1] for f in feature_paths]
         for feature in feature_data:
             if feature not in active_feature_names:
@@ -224,11 +246,28 @@ class CloudFeatureStore(BaseFeatureStore):
                 ts.delete(feature, ns["url"], storage_options=ns["storage_options"])
 
     def list_features(self, **kwargs):
-        self.__class__._validate_kwargs(kwargs, valid=["name", "namespace", "regex"])
+        self.__class__._validate_kwargs(
+            kwargs, valid=["name", "namespace", "regex", "friendly"]
+        )
         url = self._endpoint + "feature"
         response = requests.get(url, params=kwargs, headers=self._api_headers())
         self._check_response(response)
         df = pd.DataFrame(response.json())
+        if df.empty:
+            return pd.DataFrame(
+                columns=[
+                    "namespace",
+                    "name",
+                    "version",
+                    "description",
+                    "meta",
+                    "serialized",
+                    "transform",
+                    "partition",
+                ]
+            )
+        if "transform" in df.columns and kwargs.get("friendly", True):
+            df = df.assign(transform=df["transform"].apply(lambda x: x is not None))
         return df
 
     def create_feature(self, name, namespace=None, **kwargs):
@@ -239,7 +278,9 @@ class CloudFeatureStore(BaseFeatureStore):
         )
         url = self._endpoint + "feature"
         body = {"name": name, "namespace": namespace, **kwargs}
-        response = requests.post(url, json=body, headers=self._api_headers())
+        response = requests.post(
+            url, data=json.dumps(body), headers=self._api_headers()
+        )
         self._check_response(response)
 
     def clone_feature(self, name, namespace=None, **kwargs):
@@ -260,6 +301,7 @@ class CloudFeatureStore(BaseFeatureStore):
         payload = self._get("feature", namespace=from_namespace, name=from_name)
         _ = payload.pop("name")
         _ = payload.pop("namespace")
+        _ = payload.pop("version")
         # Create the new feature
         self.create_feature(
             name=to_name,
@@ -267,7 +309,7 @@ class CloudFeatureStore(BaseFeatureStore):
             **payload,
         )
         # Copy data to new feature, if this raises exception will rollback
-        if not payload.transform:
+        if not payload.get("transform"):
             # Get location of this feature to copy to
             from_ns = self._get("namespace", name=from_namespace)
             to_ns = self._get("namespace", name=to_namespace)
@@ -306,7 +348,9 @@ class CloudFeatureStore(BaseFeatureStore):
         )
         url = self._endpoint + "feature"
         body = {"name": name, "namespace": namespace, **kwargs}
-        response = requests.patch(url, json=body, headers=self._api_headers())
+        response = requests.patch(
+            url, data=json.dumps(body), headers=self._api_headers()
+        )
         self._check_response(response)
 
     def transform(self, name, namespace=None, from_features=[]):
@@ -323,7 +367,11 @@ class CloudFeatureStore(BaseFeatureStore):
                     feature in existing_features
                 ), f"{feature} does not exist in the feature store"
 
-            transform = {"function": func, "args": computed_from}
+            transform = {
+                "format": "cloudpickle",
+                "function": utils.serialize(func),
+                "args": computed_from,
+            }
             payload = {"transform": transform, "description": func.__doc__}
             if self._exists("feature", namespace=to_namespace, name=to_name):
                 # Already exists, update it
@@ -340,7 +388,7 @@ class CloudFeatureStore(BaseFeatureStore):
         return decorator
 
     def _load_transform(
-        self, feature, from_date, to_date, freq, time_travel, callers=[]
+        self, feature, from_date, to_date, freq, time_travel, mode, callers=[]
     ):
         # Check for recursive transforms
         full_name = feature["namespace"] + "/" + feature["name"]
@@ -357,22 +405,28 @@ class CloudFeatureStore(BaseFeatureStore):
             ns = self._get("namespace", name=namespace)
             # Load individual feature
             df = self._load(
-                f, from_date, to_date, freq, time_travel, callers=[*callers, full_name]
+                f,
+                from_date,
+                to_date,
+                freq,
+                time_travel,
+                mode,
+                callers=[*callers, full_name],
             )
             dfs.append(df.rename(columns={"value": f"{namespace}/{name}"}))
         # Merge features into a single dataframe
         dfs = ts.concat(dfs)
         # Make sure columns are in the same order as args
-        dfs = dfs[self.transform["args"]]
+        dfs = dfs[feature["transform"]["args"]]
         # Apply transform function
         transformed = ts.transform(dfs, func, mode)
         return transformed
 
-    def _load(self, feature, from_date, to_date, freq, time_travel, callers=[]):
+    def _load(self, feature, from_date, to_date, freq, time_travel, mode, callers=[]):
         if feature["transform"]:
             # Apply feature transform
             return self._load_transform(
-                feature, from_date, to_date, freq, time_travel, callers=[]
+                feature, from_date, to_date, freq, time_travel, mode, callers
             )
         else:
             ns = self._get("namespace", name=feature["namespace"])
@@ -384,7 +438,7 @@ class CloudFeatureStore(BaseFeatureStore):
                 to_date,
                 freq,
                 time_travel,
-                self.mode,
+                mode,
                 feature["serialized"],
             )
 
@@ -401,7 +455,7 @@ class CloudFeatureStore(BaseFeatureStore):
         for f in self._unpack_list(features):
             namespace, name = f
             feature = self._get("feature", name=name, namespace=namespace)
-            df = self._load(feature, from_date, to_date, freq, time_travel)
+            df = self._load(feature, from_date, to_date, freq, time_travel, self.mode)
             dfs.append(df.rename(columns={"value": f"{namespace}/{name}"}))
         return ts.concat(dfs)
 
@@ -432,8 +486,7 @@ class CloudFeatureStore(BaseFeatureStore):
         else:
             # Multiple features in column names
             for feature_name in feature_columns:
-                namespace, name = self.__class__._split_name(namespace, feature_name)
-                if not self._exists("feature", namespace=namespace, name=name):
+                if not self._exists("feature", name=feature_name):
                     raise ValueError(
                         f"Feature named {name} does not exist in {namespace}"
                     )
@@ -443,4 +496,23 @@ class CloudFeatureStore(BaseFeatureStore):
                 self.save_dataframe(feature_df)
 
     def last(self, features):
-        pass
+        result = {}
+        for f in self._unpack_list(features):
+            namespace, name = f
+            feature = self._get("feature", namespace=namespace, name=name)
+            # Load individual feature
+            df = self._load(
+                feature,
+                from_date=None,
+                to_date=None,
+                freq=None,
+                time_travel=None,
+                mode=self.mode,
+            )
+            # TODO: make this more efficient in Pandas mode
+            r = df.tail(1)
+            if r.empty:
+                result[f"{namespace}/{name}"] = None
+            else:
+                result[f"{namespace}/{name}"] = r["value"].iloc[0]
+        return result

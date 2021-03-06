@@ -127,6 +127,7 @@ class BaseFeatureStore(ABC):
             name (str, optional): name of feature to filter by.
             namespace (str, optional): namespace to filter by.
             regex (str, optional): regex filter on name.
+            friendly (bool, optional): simplify output for user.
 
         Returns:
             pd.DataFrame: DataFrame of features and metadata.
