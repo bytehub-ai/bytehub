@@ -7,6 +7,7 @@ from pandas.io import json
 from ._base import BaseFeatureStore
 from . import _timeseries as ts
 from . import _utils as utils
+from .exceptions import *
 
 
 try:
@@ -45,7 +46,7 @@ class CloudFeatureStore(BaseFeatureStore):
                 if you trust the feature store and the transforms that have been saved to it.
         """
         if backend.lower() not in ["pandas", "dask"]:
-            raise ValueError("Backend must be either pandas or dask")
+            raise FeatureStoreException("Backend must be either pandas or dask")
         self.mode = backend.lower()
         self._endpoint = connection_string
         if "/v1" not in self._endpoint:
@@ -96,7 +97,7 @@ class CloudFeatureStore(BaseFeatureStore):
                 message = payload.get("message", payload.get("Message", ""))
             except requests.exceptions.RequestException:
                 message = response.text
-            raise RuntimeError(message)
+            raise RemoteFeatureStoreException(message)
 
     def _check_tokens(self):
         # Check that token hasn't expired
@@ -114,7 +115,7 @@ class CloudFeatureStore(BaseFeatureStore):
                 )
                 self._tokens = tokens
             else:
-                raise RuntimeError("Cannot find refresh token")
+                raise RemoteFeatureStoreException("Cannot find refresh token")
 
     def _api_headers(self):
         # Headers to add to API requests
@@ -146,7 +147,7 @@ class CloudFeatureStore(BaseFeatureStore):
         elif entity.lower() == "namespace":
             ls = self.list_namespaces(name=kwargs.get("name", kwargs.get("namespace")))
         else:
-            raise ValueError(f"Unrecognised entity: {entity}")
+            raise MissingFeatureException(f"Unrecognised entity: {entity}")
         return not ls.empty
 
     def _get(self, entity, **kwargs):
@@ -162,9 +163,9 @@ class CloudFeatureStore(BaseFeatureStore):
                 self._namespaces.name == kwargs.get("name", kwargs.get("namespace"))
             ]
         else:
-            raise ValueError(f"Unrecognised entity: {entity}")
+            raise MissingFeatureException(f"Unrecognised entity: {entity}")
         if len(ls) != 1:
-            raise ValueError(f"{entity} not found: {kwargs}")
+            raise MissingFeatureException(f"{entity} not found: {kwargs}")
         return ls.iloc[0].to_dict()
 
     def list_namespaces(self, **kwargs):
@@ -220,7 +221,7 @@ class CloudFeatureStore(BaseFeatureStore):
 
     def delete_namespace(self, name):
         if not self.list_features(namespace=name).empty:
-            raise RuntimeError(
+            raise FeatureStoreException(
                 f"{name} still contains features: these must be deleted first"
             )
         url = self._endpoint + "namespace"
@@ -294,9 +295,9 @@ class CloudFeatureStore(BaseFeatureStore):
         )
         to_namespace, to_name = self.__class__._split_name(namespace, name)
         if not self._exists("namespace", namespace=from_namespace):
-            raise ValueError(f"{from_namespace} namespace does not exist")
+            raise MissingFeatureException(f"{from_namespace} namespace does not exist")
         if not self._exists("namespace", namespace=to_namespace):
-            raise ValueError(f"{to_namespace} namespace does not exist")
+            raise MissingFeatureException(f"{to_namespace} namespace does not exist")
         # Get the existing feature
         payload = self._get("feature", namespace=from_namespace, name=from_name)
         _ = payload.pop("name")
@@ -325,7 +326,9 @@ class CloudFeatureStore(BaseFeatureStore):
             except Exception as e:
                 # Rollback... delete the newly created feature
                 self.delete_feature(name=from_name, namespace=from_namespace)
-                raise RuntimeError(f"Unable to save data to {path}: {str(e)}")
+                raise RemoteFeatureStoreException(
+                    f"Unable to save data to {path}: {str(e)}"
+                )
 
     def delete_feature(self, name, namespace=None, delete_data=False):
         url = self._endpoint + "feature"
@@ -393,7 +396,9 @@ class CloudFeatureStore(BaseFeatureStore):
         # Check for recursive transforms
         full_name = feature["namespace"] + "/" + feature["name"]
         if full_name in callers:
-            raise RuntimeError(f"Recursive feature transform detected on {full_name}")
+            raise FeatureStoreException(
+                f"Recursive feature transform detected on {full_name}"
+            )
         # Load the transform function
         func = utils.deserialize(feature["transform"]["function"])
         # Load the features to transform
@@ -466,7 +471,7 @@ class CloudFeatureStore(BaseFeatureStore):
             # Single feature to save
             if feature_columns[0] == "value":
                 if not name:
-                    raise ValueError("Must specify feature name")
+                    raise FeatureStoreException("Must specify feature name")
             else:
                 name = feature_columns[0]
                 df = df.rename(columns={name: "value"})
@@ -487,7 +492,7 @@ class CloudFeatureStore(BaseFeatureStore):
             # Multiple features in column names
             for feature_name in feature_columns:
                 if not self._exists("feature", name=feature_name):
-                    raise ValueError(
+                    raise FeatureStoreException(
                         f"Feature named {name} does not exist in {namespace}"
                     )
             for feature_name in feature_columns:

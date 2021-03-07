@@ -6,6 +6,8 @@ from sqlalchemy.sql import text
 from . import _connection as conn
 from ._base import BaseFeatureStore
 from . import _timeseries as ts
+from .exceptions import *
+
 
 try:
     # Allow for a minimal install with no dask
@@ -45,7 +47,7 @@ class CoreFeatureStore(BaseFeatureStore):
             connection_string, connect_args=connect_args
         )
         if backend.lower() not in ["pandas", "dask"]:
-            raise ValueError("Backend must be either pandas or dask")
+            raise FeatureStoreException("Backend must be either pandas or dask")
         self.mode = backend.lower()
         model.Base.metadata.create_all(self.engine)
 
@@ -85,7 +87,7 @@ class CoreFeatureStore(BaseFeatureStore):
                 r = r.filter_by(name=name)
             obj = r.one_or_none()
             if not obj:
-                raise RuntimeError(
+                raise MissingFeatureException(
                     f"No existing {cls.__name__} named {name} in {namespace}"
                 )
             if hasattr(obj, "delete_data") and delete_data:
@@ -102,7 +104,7 @@ class CoreFeatureStore(BaseFeatureStore):
                 r = r.filter_by(name=name)
             obj = r.one_or_none()
             if not obj:
-                raise RuntimeError(
+                raise MissingFeatureException(
                     f"No existing {cls.__name__} named {name} in {namespace}"
                 )
             # Apply updates from payload
@@ -114,7 +116,7 @@ class CoreFeatureStore(BaseFeatureStore):
         else:
             namespace, name = self.__class__._split_name(namespace, name)
             if not self._exists(model.Namespace, namespace=namespace):
-                raise ValueError(f"{namespace} namespace does not exist")
+                raise MissingFeatureException(f"{namespace} namespace does not exist")
             payload.update({"name": name, "namespace": namespace})
         with conn.session_scope(self.session_maker) as session:
             obj = cls()
@@ -150,7 +152,7 @@ class CoreFeatureStore(BaseFeatureStore):
 
     def delete_namespace(self, name):
         if not self.list_features(namespace=name).empty:
-            raise RuntimeError(
+            raise FeatureStoreException(
                 f"{name} still contains features: these must be deleted first"
             )
         self._delete(model.Namespace, name=name)
@@ -161,7 +163,7 @@ class CoreFeatureStore(BaseFeatureStore):
             r = r.filter_by(name=name)
             namespace = r.one_or_none()
             if not namespace:
-                raise RuntimeError(f"No existing Namespace named {name}")
+                raise MissingFeatureException(f"No existing Namespace named {name}")
             namespace.clean()
 
     def list_features(self, **kwargs):
@@ -195,16 +197,16 @@ class CoreFeatureStore(BaseFeatureStore):
         )
         to_namespace, to_name = self.__class__._split_name(namespace, name)
         if not self._exists(model.Namespace, namespace=from_namespace):
-            raise ValueError(f"{from_namespace} namespace does not exist")
+            raise MissingFeatureException(f"{from_namespace} namespace does not exist")
         if not self._exists(model.Namespace, namespace=to_namespace):
-            raise ValueError(f"{to_namespace} namespace does not exist")
+            raise MissingFeatureException(f"{to_namespace} namespace does not exist")
         with conn.session_scope(self.session_maker) as session:
             # Get the existing feature
             r = session.query(model.Feature)
             r = r.filter_by(namespace=from_namespace, name=from_name)
             feature = r.one_or_none()
             if not feature:
-                raise RuntimeError(
+                raise MissingFeatureException(
                     f"No existing Feature named {from_name} in {from_namespace}"
                 )
             # Create the new feature
@@ -269,7 +271,9 @@ class CoreFeatureStore(BaseFeatureStore):
                     .one_or_none()
                 )
                 if not feature:
-                    raise ValueError(f"No feature named {name} exists in {namespace}")
+                    raise MissingFeatureException(
+                        f"No feature named {name} exists in {namespace}"
+                    )
                 # Load individual feature
                 df = feature.load(
                     from_date=from_date,
@@ -288,12 +292,14 @@ class CoreFeatureStore(BaseFeatureStore):
             # Single feature to save
             if feature_columns[0] == "value":
                 if not name:
-                    raise ValueError("Must specify feature name")
+                    raise FeatureStoreException("Must specify feature name")
             else:
                 name = feature_columns[0]
                 df = df.rename(columns={name: "value"})
             if not self._exists(model.Feature, namespace, name):
-                raise ValueError(f"Feature named {name} does not exist in {namespace}")
+                raise MissingFeatureException(
+                    f"Feature named {name} does not exist in {namespace}"
+                )
             # Save data for this feature
             namespace, name = self.__class__._split_name(namespace, name)
             with conn.session_scope(self.session_maker) as session:
@@ -308,7 +314,7 @@ class CoreFeatureStore(BaseFeatureStore):
             # Multiple features in column names
             for feature_name in feature_columns:
                 if not self._exists(model.Feature, namespace, name):
-                    raise ValueError(
+                    raise MissingFeatureException(
                         f"Feature named {name} does not exist in {namespace}"
                     )
             for feature_name in feature_columns:
@@ -327,7 +333,9 @@ class CoreFeatureStore(BaseFeatureStore):
                     .one_or_none()
                 )
                 if not feature:
-                    raise ValueError(f"No feature named {name} exists in {namespace}")
+                    raise MissingFeatureException(
+                        f"No feature named {name} exists in {namespace}"
+                    )
                 # Load individual feature
                 result[f"{namespace}/{name}"] = feature.last(mode=self.mode)
         return result
