@@ -32,16 +32,27 @@ def delete(name, url, storage_options):
 
 
 def load(
-    name, url, storage_options, from_date, to_date, freq, time_travel, mode, serialized
+    name,
+    url,
+    storage_options,
+    from_date,
+    to_date,
+    freq,
+    time_travel,
+    mode,
+    serialized,
+    partitions=None,
 ):
     """Load timeseries data from storage."""
     # Identify which partitions to read
     filters = []
-    # TODO: Can this be achieved more efficiently with partitions?
     if from_date:
         filters.append(("time", ">=", pd.Timestamp(from_date)))
     if to_date:
         filters.append(("time", "<=", pd.Timestamp(to_date)))
+    if partitions:
+        for p in partitions:
+            filters.append(("partition", "==", p))
     filters = [filters] if filters else None
     # Read the data
     path = posixpath.join(url, "feature", name)
@@ -159,6 +170,25 @@ def apply_partition(partition, dt, offset=0):
             return str(pd.Timestamp(dt).date() + pd.Timedelta(days=offset))
         else:
             raise NotImplementedError(f"{partition} has not been implemented")
+
+
+def list_partitions(name, url, storage_options, n=None, reverse=False):
+    """List the available partitions for a feature."""
+    fs, fs_token, paths = fsspec.get_fs_token_paths(
+        url,
+        storage_options=_clean_dict(storage_options),
+    )
+    feature_path = posixpath.join(paths[0], "feature", name)
+    try:
+        objects = fs.ls(feature_path)
+    except FileNotFoundError:
+        return []
+    partitions = [obj for obj in objects if obj.startswith("partition=")]
+    partitions = [p.split("=")[1] for p in partitions]
+    partitions = sorted(partitions, reverse=reverse)
+    if n:
+        partitions = partitions[:n]
+    return partitions
 
 
 def save(df, name, url, storage_options, partition="date", serialized=False):
