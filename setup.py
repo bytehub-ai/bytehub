@@ -24,5 +24,6 @@ setup(
     extras_require={
         "dev": ["pytest", "black", "bump2version", "jupyterlab", "pre-commit", "pdoc3"],
         "aws": ["s3fs==0.4"],
+        "cloud": ["s3fs==0.4"],
     },
 )

@@ -86,6 +86,8 @@ class CloudFeatureStore(BaseFeatureStore):
                 self._urls["token_url"], code=code_response, include_client_id=True
             )
         self._tokens = tokens
+        # Call list_namespaces to get temporary access tokens
+        self.list_namespaces()
 
     def _check_response(self, response):
         # Raise an exception if response is not OK
