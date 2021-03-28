@@ -4,12 +4,3 @@ repos:
     hooks:
       - id: black
         language_version: python3 # Should be a command that runs python3.6+
-  - repo: local
-    hooks:
-      - id: pdoc
-        name: pdoc
-        language: system
-        types: [python]
-        entry: pdoc
-        pass_filenames: false
-        args: ["--html", "--output-dir", "docs", "--force", "--template-dir", "docs/templates", "bytehub"]
