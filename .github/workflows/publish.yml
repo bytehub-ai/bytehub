@@ -15,8 +15,40 @@ jobs:
           python-version: 3.8
       - name: Install dependencies
         run: |
-          pip install twine wheel
-      - name: Build and publish
+          pip install twine wheel pdoc3 bump2version
+      - name: Build documentation
+        run: |
+          pdoc --html --output-dir docs --force --template-dir docs/templates bytehub
+      - name: Commit documentation
+        uses: EndBug/add-and-commit@v7
+        with:
+          author_name: github-actions
+          author_email: 41898282+github-actions[bot]@users.noreply.github.com
+          message: 'Updated documentation'
+          add: 'docs/.'
+      - name: Bump major version
+        if: ${{ contains(github.event.head_commit.message, '[major]') }}
+        run: |
+          bumpversion major
+      - name: Bump minor version
+        if: ${{ contains(github.event.head_commit.message, '[minor]') }}
+        run: |
+          bumpversion minor
+      - name: Bump patch version
+        if: ${{ !(contains(github.event.head_commit.message, '[major]') || contains(github.event.head_commit.message, '[minor]')) }}
+        run: |
+          bumpversion patch
+      - name: Fetch release version
+        run: echo "RELEASE_TAG=v$(python -c 'from bytehub._version import __version__; print(__version__)')" >> $GITHUB_ENV
+      - name: Commit release
+        uses: EndBug/add-and-commit@v7
+        with:
+          author_name: github-actions
+          author_email: 41898282+github-actions[bot]@users.noreply.github.com
+          message: Bumped version to ${{ env.RELEASE_TAG }}
+          add: '.'
+          tag: ${{ env.RELEASE_TAG }}
+      - name: Build wheel and publish
         env:
           TWINE_USERNAME: __token__
           TWINE_REPOSITORY: pypi
