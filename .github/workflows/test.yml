@@ -17,5 +17,5 @@ jobs:
           pip install -r requirements_test.txt
       - name: Run tests with pytest
         env:
-            BYTEHUB_TOKEN: ${{ secrets.BYTEHUB_TOKEN }}
+          BYTEHUB_TOKEN: ${{ secrets.BYTEHUB_TOKEN }}
         run: python -m pytest 
