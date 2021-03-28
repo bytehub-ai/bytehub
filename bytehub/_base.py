@@ -174,7 +174,7 @@ class BaseFeatureStore(ABC):
         raise NotImplementedError()
 
     def update_feature(self, name, namespace=None, **kwargs):
-        """Update a namespace in the feature store.
+        """Update a feature in the feature store.
 
         Args:
             name (str): feature to update.

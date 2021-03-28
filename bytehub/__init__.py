@@ -5,7 +5,7 @@ a remote database/file storage, or run in a cloud-hosted mode.
 ByteHub uses Dask for data storage, allowing it to be scaled to large datasets and
 cluster compute environments.
 
-Exammple usage for a local SQLite feature store:
+Example usage for a local SQLite feature store:
 
     import bytehub as bh
     fs = bh.FeatureStore()
