@@ -15,7 +15,8 @@ except ImportError:
 
 def _clean_dict(d):
     """Cleans dictionary of extraneous keywords."""
-    return {k: v for k, v in d.items() if not k.startswith("_")}
+    remove_keys = ["_expiry"]
+    return {k: v for k, v in d.items() if k not in remove_keys}
 
 
 def delete(name, url, storage_options):
