@@ -15,7 +15,8 @@ except ImportError:
 
 def _clean_dict(d):
     """Cleans dictionary of extraneous keywords."""
-    return {k: v for k, v in d.items() if not k.startswith("_")}
+    remove_keys = ["_expires"]
+    return {k: v for k, v in d.items() if k not in remove_keys}
 
 
 def delete(name, url, storage_options):
@@ -117,7 +118,9 @@ def load(
         else:
             # Filter on date range
             pdf = pdf.loc[pd.Timestamp(from_date) : pd.Timestamp(to_date)]
-        return pdf.drop(columns="partition")
+        if "partition" in pdf.columns:
+            pdf = pdf.drop(columns="partition")
+        return pdf
 
     elif mode == "dask":
         # Keep only last created_time for each index timestamp
@@ -140,7 +143,11 @@ def load(
             ddf = dd.merge(
                 # Interpolate
                 dd.merge(
-                    ddf, samples, left_index=True, right_index=True, how="outer"
+                    ddf.repartition(npartitions=1),
+                    samples,
+                    left_index=True,
+                    right_index=True,
+                    how="outer",
                 ).ffill(),
                 samples,
                 left_index=True,
@@ -150,7 +157,9 @@ def load(
         else:
             # Filter on date range
             ddf = ddf.loc[pd.Timestamp(from_date) : pd.Timestamp(to_date)]
-        return ddf.drop(columns="partition")
+        if "partition" in ddf.columns:
+            ddf = ddf.drop(columns="partition")
+        return ddf
     else:
         raise ValueError(f'Unknown mode: {mode}, should be "pandas" or "dask"')
 
@@ -160,7 +169,7 @@ def apply_partition(partition, dt, offset=0):
         if partition == "year":
             return dt.dt.year + offset
         elif partition == "date":
-            return (dt + pd.Timedelta(days=offset)).dt.date.to_string()
+            return (dt + pd.Timedelta(days=offset)).dt.strftime("%Y-%m-%d")
         else:
             raise NotImplementedError(f"{partition} has not been implemented")
     else:
@@ -303,7 +312,7 @@ def concat(dfs):
             lambda left, right: dd.merge(
                 left, right, left_index=True, right_index=True, how="outer"
             ),
-            dfs,
+            [df.repartition(npartitions=1) for df in dfs],
         )
         return dfs.ffill()
     else:
