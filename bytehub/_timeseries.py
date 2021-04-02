@@ -133,6 +133,8 @@ def load(
             .last()
         )
         ddf = dd.from_delayed([delayed_apply(d) for d in ddf.to_delayed()])
+        #  Repartition to remove empty chunks
+        ddf = ddf.repartition(partition_size="25MB")
         # Apply resampling/date filtering
         if freq:
             # Index samples for final dataframe
@@ -143,7 +145,7 @@ def load(
             ddf = dd.merge(
                 # Interpolate
                 dd.merge(
-                    ddf.repartition(npartitions=1),
+                    ddf,
                     samples,
                     left_index=True,
                     right_index=True,
@@ -159,6 +161,8 @@ def load(
             ddf = ddf.loc[pd.Timestamp(from_date) : pd.Timestamp(to_date)]
         if "partition" in ddf.columns:
             ddf = ddf.drop(columns="partition")
+        #  Repartition to remove empty chunks
+        ddf = ddf.repartition(partition_size="25MB")
         return ddf
     else:
         raise ValueError(f'Unknown mode: {mode}, should be "pandas" or "dask"')
@@ -283,7 +287,7 @@ def copy(
             path, engine="pyarrow", storage_options=_clean_dict(from_storage_options)
         )
         # Repartition to optimise files on new dataset
-        ddf = ddf.repartition(partition_size="100MB")
+        ddf = ddf.repartition(partition_size="25MB")
     except Exception as e:
         # No data available
         return
@@ -312,7 +316,7 @@ def concat(dfs):
             lambda left, right: dd.merge(
                 left, right, left_index=True, right_index=True, how="outer"
             ),
-            [df.repartition(npartitions=1) for df in dfs],
+            [df for df in dfs],
         )
         return dfs.ffill()
     else:
