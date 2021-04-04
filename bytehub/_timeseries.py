@@ -19,6 +19,14 @@ def _clean_dict(d):
     return {k: v for k, v in d.items() if k not in remove_keys}
 
 
+def _allow_partitions(url):
+    # Partitions currently not working on GCP: https://github.com/dask/dask/issues/7509
+    if url.startswith("gs://") or url.startswith("gcs://"):
+        return False
+    else:
+        return True
+
+
 def delete(name, url, storage_options):
     """Delete timeseries data for a feature."""
     fs, fs_token, paths = fsspec.get_fs_token_paths(
@@ -51,7 +59,7 @@ def load(
         filters.append(("time", ">=", pd.Timestamp(from_date)))
     if to_date:
         filters.append(("time", "<=", pd.Timestamp(to_date)))
-    if partitions:
+    if partitions and _allow_partitions(url):
         for p in partitions:
             filters.append(("partition", "==", p))
     filters = [filters] if filters else None
@@ -73,6 +81,8 @@ def load(
             columns=["time", "created_time", "value", "partition"]
         ).set_index("time")
         ddf = dd.from_pandas(empty_df, chunksize=1)
+    if "partition" in ddf.columns:
+        ddf = ddf.drop(columns="partition")
     # Apply time-travel
     if time_travel:
         ddf = ddf.reset_index()
@@ -85,7 +95,6 @@ def load(
             meta={
                 "value": "object",
                 "created_time": "datetime64[ns]",
-                "partition": "uint16",
             },
         )
     if not from_date:
@@ -118,8 +127,6 @@ def load(
         else:
             # Filter on date range
             pdf = pdf.loc[pd.Timestamp(from_date) : pd.Timestamp(to_date)]
-        if "partition" in pdf.columns:
-            pdf = pdf.drop(columns="partition")
         return pdf
 
     elif mode == "dask":
@@ -159,8 +166,6 @@ def load(
         else:
             # Filter on date range
             ddf = ddf.loc[pd.Timestamp(from_date) : pd.Timestamp(to_date)]
-        if "partition" in ddf.columns:
-            ddf = ddf.drop(columns="partition")
         #  Repartition to remove empty chunks
         ddf = ddf.repartition(partition_size="25MB")
         return ddf
@@ -202,6 +207,36 @@ def list_partitions(name, url, storage_options, n=None, reverse=False):
     if n:
         partitions = partitions[:n]
     return partitions
+
+
+def last(name, url, storage_options, serialized=False):
+    # Read the data
+    path = posixpath.join(url, "feature", name)
+    try:
+        ddf = dd.read_parquet(
+            path,
+            engine="pyarrow",
+            storage_options=_clean_dict(storage_options),
+        )
+    except PermissionError as e:
+        raise e
+    except Exception as e:
+        # No data
+        return pd.DataFrame(columns=["value"])
+    # Get the data for the last index value
+    last_index = ddf.tail(1).index[0]
+    df = load(
+        name,
+        url,
+        storage_options,
+        from_date=last_index,
+        to_date=None,
+        freq=None,
+        time_travel=None,
+        mode="pandas",
+        serialized=serialized,
+    )
+    return df.tail(1)
 
 
 def save(df, name, url, storage_options, partition="date", serialized=False):
