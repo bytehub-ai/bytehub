@@ -19,6 +19,14 @@ def _clean_dict(d):
     return {k: v for k, v in d.items() if k not in remove_keys}
 
 
+def _allow_partitions(url):
+    # Partitions currently not working on GCP: https://github.com/dask/dask/issues/7509
+    if url.startswith("gs://") or url.startswith("gcs://"):
+        return False
+    else:
+        return True
+
+
 def delete(name, url, storage_options):
     """Delete timeseries data for a feature."""
     fs, fs_token, paths = fsspec.get_fs_token_paths(
@@ -51,7 +59,7 @@ def load(
         filters.append(("time", ">=", pd.Timestamp(from_date)))
     if to_date:
         filters.append(("time", "<=", pd.Timestamp(to_date)))
-    if partitions:
+    if partitions and _allow_partitions(url):
         for p in partitions:
             filters.append(("partition", "==", p))
     filters = [filters] if filters else None
@@ -73,6 +81,8 @@ def load(
             columns=["time", "created_time", "value", "partition"]
         ).set_index("time")
         ddf = dd.from_pandas(empty_df, chunksize=1)
+    if "partition" in ddf.columns:
+        ddf = ddf.drop(columns="partition")
     # Apply time-travel
     if time_travel:
         ddf = ddf.reset_index()
@@ -85,7 +95,6 @@ def load(
             meta={
                 "value": "object",
                 "created_time": "datetime64[ns]",
-                "partition": "uint16",
             },
         )
     if not from_date:
@@ -118,8 +127,6 @@ def load(
         else:
             # Filter on date range
             pdf = pdf.loc[pd.Timestamp(from_date) : pd.Timestamp(to_date)]
-        if "partition" in pdf.columns:
-            pdf = pdf.drop(columns="partition")
         return pdf
 
     elif mode == "dask":
@@ -133,6 +140,8 @@ def load(
             .last()
         )
         ddf = dd.from_delayed([delayed_apply(d) for d in ddf.to_delayed()])
+        #  Repartition to remove empty chunks
+        ddf = ddf.repartition(partition_size="25MB")
         # Apply resampling/date filtering
         if freq:
             # Index samples for final dataframe
@@ -143,7 +152,7 @@ def load(
             ddf = dd.merge(
                 # Interpolate
                 dd.merge(
-                    ddf.repartition(npartitions=1),
+                    ddf,
                     samples,
                     left_index=True,
                     right_index=True,
@@ -157,8 +166,8 @@ def load(
         else:
             # Filter on date range
             ddf = ddf.loc[pd.Timestamp(from_date) : pd.Timestamp(to_date)]
-        if "partition" in ddf.columns:
-            ddf = ddf.drop(columns="partition")
+        #  Repartition to remove empty chunks
+        ddf = ddf.repartition(partition_size="25MB")
         return ddf
     else:
         raise ValueError(f'Unknown mode: {mode}, should be "pandas" or "dask"')
@@ -198,6 +207,24 @@ def list_partitions(name, url, storage_options, n=None, reverse=False):
     if n:
         partitions = partitions[:n]
     return partitions
+
+
+def last_date(name, url, storage_options):
+    # Read the data
+    path = posixpath.join(url, "feature", name)
+    try:
+        ddf = dd.read_parquet(
+            path,
+            engine="pyarrow",
+            storage_options=_clean_dict(storage_options),
+        )
+    except PermissionError as e:
+        raise e
+    except Exception as e:
+        # No data
+        return None
+    # Get the last index value
+    return ddf.tail(1).index[0]
 
 
 def save(df, name, url, storage_options, partition="date", serialized=False):
@@ -273,7 +300,13 @@ def save(df, name, url, storage_options, partition="date", serialized=False):
 
 
 def copy(
-    from_name, from_url, from_storage_options, to_name, to_url, to_storage_options
+    from_name,
+    from_url,
+    from_storage_options,
+    to_name,
+    to_url,
+    to_storage_options,
+    partition="date",
 ):
     """Used during clone operations to copy timeseries data between locations."""
     # Read the data
@@ -283,10 +316,16 @@ def copy(
             path, engine="pyarrow", storage_options=_clean_dict(from_storage_options)
         )
         # Repartition to optimise files on new dataset
-        ddf = ddf.repartition(partition_size="100MB")
+        ddf = ddf.repartition(partition_size="25MB")
     except Exception as e:
         # No data available
         return
+    # Check for missing partition column
+    if "partition" not in ddf.columns:
+        # Add a new partition column
+        ddf = ddf.reset_index()
+        ddf = ddf.assign(partition=apply_partition(partition, ddf.time))
+        ddf = ddf.set_index("time")
     # Copy data to new location
     path = posixpath.join(to_url, "feature", to_name)
     ddf.to_parquet(
@@ -312,7 +351,7 @@ def concat(dfs):
             lambda left, right: dd.merge(
                 left, right, left_index=True, right_index=True, how="outer"
             ),
-            [df.repartition(npartitions=1) for df in dfs],
+            [df for df in dfs],
         )
         return dfs.ffill()
     else:

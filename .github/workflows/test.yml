@@ -15,7 +15,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install -r requirements_test.txt
-      - name: Run tests with pytest
+      - name: Quick tests
+        run: pytest
+      - name: Full tests
         env:
+          CLOUDSTORE_AWS: ${{ secrets.CLOUDSTORE_AWS }}
+          CLOUDSTORE_GCP: ${{ secrets.CLOUDSTORE_GCP }}
           BYTEHUB_TOKEN: ${{ secrets.BYTEHUB_TOKEN }}
-        run: python -m pytest 
+        run: pytest 
