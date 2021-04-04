@@ -1,2 +1,3 @@
 pytest
 s3fs==0.4
+gcsfs
