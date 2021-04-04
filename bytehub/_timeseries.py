@@ -209,7 +209,7 @@ def list_partitions(name, url, storage_options, n=None, reverse=False):
     return partitions
 
 
-def last(name, url, storage_options, serialized=False):
+def last_date(name, url, storage_options):
     # Read the data
     path = posixpath.join(url, "feature", name)
     try:
@@ -222,21 +222,9 @@ def last(name, url, storage_options, serialized=False):
         raise e
     except Exception as e:
         # No data
-        return pd.DataFrame(columns=["value"])
-    # Get the data for the last index value
-    last_index = ddf.tail(1).index[0]
-    df = load(
-        name,
-        url,
-        storage_options,
-        from_date=last_index,
-        to_date=None,
-        freq=None,
-        time_travel=None,
-        mode="pandas",
-        serialized=serialized,
-    )
-    return df.tail(1)
+        return None
+    # Get the last index value
+    return ddf.tail(1).index[0]
 
 
 def save(df, name, url, storage_options, partition="date", serialized=False):

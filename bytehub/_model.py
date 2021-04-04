@@ -167,7 +167,7 @@ class Feature(Base, FeatureStoreMixin):
         )
 
     def load_transform(
-        self, from_date, to_date, freq, time_travel, mode, n_partitions=None, callers=[]
+        self, from_date, to_date, freq, time_travel, mode, last=False, callers=[]
     ):
         # Get the SQLAlchemy session for this feature
         session = sa.inspect(self).session
@@ -199,7 +199,7 @@ class Feature(Base, FeatureStoreMixin):
                 freq=freq,
                 time_travel=time_travel,
                 mode=mode,
-                n_partitions=n_partitions,
+                last=last,
                 callers=[*callers, self.full_name],
             )
             dfs.append(df.rename(columns={"value": f"{namespace}/{name}"}))
@@ -218,7 +218,7 @@ class Feature(Base, FeatureStoreMixin):
         freq=None,
         time_travel=None,
         mode="pandas",
-        n_partitions=None,
+        last=False,
         callers=[],
     ):
         # Does this feature need to be transformed?
@@ -229,20 +229,16 @@ class Feature(Base, FeatureStoreMixin):
                 freq=freq,
                 time_travel=time_travel,
                 mode=mode,
-                n_partitions=n_partitions,
+                last=last,
                 callers=callers,
             )
         # Get location
         url = self.namespace_object.url
         storage_options = self.namespace_object.storage_options
-        # Restrict which partitions are loaded (used for getting last partition)
-        partitions = (
-            ts.list_partitions(
-                self.name, url, storage_options, n=n_partitions, reverse=True
-            )
-            if n_partitions
-            else None
-        )
+        # Restrict which partitions are loaded when getting last value
+        if last:
+            from_date = ts.last_date(self.name, url, storage_options)
+            to_date = None
         # Load dataframe
         return ts.load(
             self.name,
@@ -254,12 +250,11 @@ class Feature(Base, FeatureStoreMixin):
             time_travel,
             mode,
             self.serialized,
-            partitions=partitions,
         )
 
     def last(self, mode="pandas"):
         # Fetch last feature value
-        df = self.load(mode=mode)
+        df = self.load(mode=mode, last=True)
         result = df.tail(1)
         if result.empty:
             return None

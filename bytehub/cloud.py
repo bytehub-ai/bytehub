@@ -400,7 +400,7 @@ class CloudFeatureStore(BaseFeatureStore):
         freq,
         time_travel,
         mode,
-        n_partitions=None,
+        last=False,
         callers=[],
     ):
         # Check for recursive transforms
@@ -426,7 +426,7 @@ class CloudFeatureStore(BaseFeatureStore):
                 freq,
                 time_travel,
                 mode,
-                n_partitions=n_partitions,
+                last=last,
                 callers=[*callers, full_name],
             )
             dfs.append(df.rename(columns={"value": f"{namespace}/{name}"}))
@@ -446,7 +446,7 @@ class CloudFeatureStore(BaseFeatureStore):
         freq,
         time_travel,
         mode,
-        n_partitions=None,
+        last=False,
         callers=[],
     ):
         if feature["transform"]:
@@ -458,23 +458,17 @@ class CloudFeatureStore(BaseFeatureStore):
                 freq,
                 time_travel,
                 mode,
-                n_partitions,
+                last,
                 callers,
             )
         else:
             ns = self._get("namespace", name=feature["namespace"])
-            # Restrict which partitions are loaded (used for getting last partition)
-            partitions = (
-                ts.list_partitions(
-                    feature["name"],
-                    ns["url"],
-                    ns["storage_options"],
-                    n=n_partitions,
-                    reverse=True,
+            # Change date range if getting last value
+            if last:
+                from_date = ts.last_date(
+                    feature["name"], ns["url"], ns["storage_options"]
                 )
-                if n_partitions
-                else None
-            )
+                to_date = None
             return ts.load(
                 feature["name"],
                 ns["url"],
@@ -485,7 +479,6 @@ class CloudFeatureStore(BaseFeatureStore):
                 time_travel,
                 mode,
                 feature["serialized"],
-                partitions=partitions,
             )
 
     def load_dataframe(
@@ -554,7 +547,7 @@ class CloudFeatureStore(BaseFeatureStore):
                 freq=None,
                 time_travel=None,
                 mode=self.mode,
-                n_partitions=1,
+                last=True,
             )
             r = df.tail(1)
             if r.empty:
