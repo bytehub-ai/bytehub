@@ -300,7 +300,13 @@ def save(df, name, url, storage_options, partition="date", serialized=False):
 
 
 def copy(
-    from_name, from_url, from_storage_options, to_name, to_url, to_storage_options
+    from_name,
+    from_url,
+    from_storage_options,
+    to_name,
+    to_url,
+    to_storage_options,
+    partition="date",
 ):
     """Used during clone operations to copy timeseries data between locations."""
     # Read the data
@@ -314,6 +320,12 @@ def copy(
     except Exception as e:
         # No data available
         return
+    # Check for missing partition column
+    if "partition" not in ddf.columns:
+        # Add a new partition column
+        ddf = ddf.reset_index()
+        ddf = ddf.assign(partition=apply_partition(partition, ddf.time))
+        ddf = ddf.set_index("time")
     # Copy data to new location
     path = posixpath.join(to_url, "feature", to_name)
     ddf.to_parquet(
