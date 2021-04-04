@@ -249,7 +249,7 @@ def test_data_deletion(fs, filesystem, file_name):
         pytest.skip("Skipping data deletion tests on cloud storage")
     print("Testing data deletion...")
 
-    dts = pd.date_range("2021-01-01", "2021-03-01")
+    dts = pd.date_range("2021-01-01", "2021-01-10")
     df1 = pd.DataFrame(
         {"time": dts, "value": np.random.randint(0, 100, size=len(dts))}
     ).set_index("time")
@@ -300,7 +300,7 @@ def test_data_deletion(fs, filesystem, file_name):
 def test_clone_features(fs):
     print("Testing cloned features")
 
-    dts = pd.date_range("2021-01-01", "2021-03-01")
+    dts = pd.date_range("2021-01-01", "2021-01-10")
     df1 = pd.DataFrame(
         {"time": dts, "value": np.random.randint(0, 100, size=len(dts))}
     ).set_index("time")
@@ -322,7 +322,7 @@ def test_clone_features(fs):
 def test_dataframes(fs):
     print("Testing data load/save...")
 
-    dts = pd.date_range("2021-01-01", "2021-03-01")
+    dts = pd.date_range("2021-01-01", "2021-01-10")
     df1 = pd.DataFrame({"time": dts, "value": np.random.randn(len(dts))}).set_index(
         "time"
     )
@@ -374,7 +374,7 @@ def test_dataframes(fs):
 def test_resampling(fs):
     print("Testing data resampling...")
 
-    dts = pd.date_range("2021-01-01", "2021-03-01")
+    dts = pd.date_range("2021-01-01", "2021-01-10")
     df1 = pd.DataFrame(
         {"time": dts, "test/resample1": np.random.randn(len(dts))}
     ).set_index("time")
@@ -518,7 +518,7 @@ def test_serialized_features(fs):
 def test_empty_features(fs):
     print("Testing empty feature datasets...")
 
-    dts = pd.date_range("2021-01-01", "2021-03-01")
+    dts = pd.date_range("2021-01-01", "2021-01-10")
     df1 = pd.DataFrame(
         {"time": dts, "test/empty1": np.random.randn(len(dts))}
     ).set_index("time")
@@ -527,7 +527,7 @@ def test_empty_features(fs):
     result = fs.load_dataframe(["test/empty1"])
     assert result.empty
     result = fs.load_dataframe(
-        ["test/empty1"], from_date="2021-01-01", to_date="2021-03-01", freq="1d"
+        ["test/empty1"], from_date="2021-01-01", to_date="2021-01-10", freq="1d"
     )
     assert len(result) == len(dts)
 
@@ -544,7 +544,7 @@ def test_empty_features(fs):
 def test_time_travel(fs):
     print("Testing time travel...")
 
-    dts = pd.date_range("2021-01-01", "2021-03-01")
+    dts = pd.date_range("2021-01-01", "2021-01-10")
     df1 = pd.DataFrame(
         {
             "time": dts,
@@ -587,7 +587,7 @@ def test_time_travel(fs):
 def test_last_values(fs):
     print("Testing last feature values...")
 
-    dts = pd.date_range("2021-01-01", "2021-03-01")
+    dts = pd.date_range("2021-01-01", "2021-01-10")
     df1 = pd.DataFrame(
         {
             "time": dts,
@@ -621,7 +621,7 @@ def test_last_values(fs):
 def test_transforms(fs):
     print("Testing feature transforms...")
 
-    dts = pd.date_range("2021-01-01", "2021-03-01")
+    dts = pd.date_range("2021-01-01", "2021-01-10")
     df1 = pd.DataFrame(
         {
             "time": dts,
