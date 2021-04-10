@@ -45,6 +45,13 @@ class CloudFeatureStore(BaseFeatureStore):
                 stored in the feature store. Required for feature transforms, but should only be enabled
                 if you trust the feature store and the transforms that have been saved to it.
         """
+        try:
+            # Check that s3fs is available
+            import s3fs
+        except ImportError:
+            raise RuntimeError(
+                "Cloud feature store requires s3fs be installed: use pip install bytehub[cloud]"
+            )
         if backend.lower() not in ["pandas", "dask"]:
             raise FeatureStoreException("Backend must be either pandas or dask")
         self.mode = backend.lower()

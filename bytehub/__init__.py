@@ -30,7 +30,7 @@ from .cloud import CloudFeatureStore
 from ._version import __version__
 
 
-def FeatureStore(connection_string="sqlite:///bytehub.db", backend="pandas", **kwargs):
+def FeatureStore(connection_string="sqlite:///bytehub.db", **kwargs):
     """Factory method to create Feature Store objects.
 
     Args:
@@ -46,18 +46,7 @@ def FeatureStore(connection_string="sqlite:///bytehub.db", backend="pandas", **k
     """
     if connection_string.startswith("http"):
         # Connect to cloud-hosted feature store
-        try:
-            # Check that s3fs is available
-            import s3fs
-        except ImportError:
-            raise RuntimeError(
-                "Cloud feature store requires s3fs be installed: use pip install bytehub[cloud]"
-            )
-        return CloudFeatureStore(
-            connection_string=connection_string, backend=backend, **kwargs
-        )
+        return CloudFeatureStore(connection_string=connection_string, **kwargs)
     else:
         # Direct connection to database using CoreFeatureStore
-        return CoreFeatureStore(
-            connection_string=connection_string, backend=backend, **kwargs
-        )
+        return CoreFeatureStore(connection_string=connection_string, **kwargs)

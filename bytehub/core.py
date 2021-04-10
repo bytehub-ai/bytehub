@@ -31,24 +31,18 @@ class CoreFeatureStore(BaseFeatureStore):
     def __init__(
         self,
         connection_string="sqlite:///bytehub.db",
-        backend="pandas",
         connect_args={},
     ):
         """
         Args:
             connection_string (str): SQLAlchemy connection string for database
                 containing feature store metadata - defaults to local sqlite file.
-            backend (str, optional): either `"pandas"` (default) or `"dask"`, specifying the type
-                of dataframes returned by `load_dataframe`.
             connect_args (dict, optional): dictionary of [connection arguments](https://docs.sqlalchemy.org/en/14/core/engines.html#sqlalchemy.create_engine.params.connect_args)
                 to pass to SQLAlchemy.
         """
         self.engine, self.session_maker = conn.connect(
             connection_string, connect_args=connect_args
         )
-        if backend.lower() not in ["pandas", "dask"]:
-            raise FeatureStoreException("Backend must be either pandas or dask")
-        self.mode = backend.lower()
         model.Base.metadata.create_all(self.engine)
 
     def _list(self, cls, namespace=None, name=None, regex=None, friendly=True):
@@ -138,7 +132,7 @@ class CoreFeatureStore(BaseFeatureStore):
     def create_namespace(self, name, **kwargs):
         self.__class__._validate_kwargs(
             kwargs,
-            valid=["description", "url", "storage_options", "meta"],
+            valid=["description", "url", "storage_options", "backend", "meta"],
             mandatory=["url"],
         )
         self._create(model.Namespace, name=name, payload=kwargs)
@@ -146,7 +140,7 @@ class CoreFeatureStore(BaseFeatureStore):
     def update_namespace(self, name, **kwargs):
         self.__class__._validate_kwargs(
             kwargs,
-            valid=["description", "storage_options", "meta"],
+            valid=["description", "storage_options", "backend", "meta"],
         )
         self._update(model.Namespace, name=name, payload=kwargs)
 

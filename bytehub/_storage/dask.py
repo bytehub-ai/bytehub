@@ -263,15 +263,20 @@ class Store(BaseStore):
         # Read the data
         fs, feature_path = self._fs(name)
         try:
-            ddf = dd.read_parquet()
+            ddf = dd.read_parquet(
+                feature_path,
+                engine="pyarrow",
+                storage_options=self._clean_dict(self.storage_options),
+            )
             # Repartition to optimise files on exported dataset
             ddf = ddf.repartition(partition_size="25MB")
+            return ddf
         except Exception as e:
             # No data available
-            return
+            return None
 
     def _import(self, name, ddf):
-        if not ddf:
+        if ddf is None or len(ddf.columns) == 0:
             return
         if "partition" not in ddf.columns:
             raise RuntimeError("Dask storage requires partitioning")
