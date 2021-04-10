@@ -280,7 +280,6 @@ class CoreFeatureStore(BaseFeatureStore):
                     to_date=to_date,
                     freq=freq,
                     time_travel=time_travel,
-                    mode=self.mode,
                 )
                 dfs.append(df.rename(columns={"value": f"{namespace}/{name}"}))
         return ts.concat(dfs)
@@ -337,5 +336,5 @@ class CoreFeatureStore(BaseFeatureStore):
                         f"No feature named {name} exists in {namespace}"
                     )
                 # Load individual feature
-                result[f"{namespace}/{name}"] = feature.last(mode=self.mode)
+                result[f"{namespace}/{name}"] = feature.last()
         return result

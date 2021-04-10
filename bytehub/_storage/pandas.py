@@ -1,11 +1,12 @@
 from .dask import Store as Dask
+import pandas as pd
 
 
 class Store(Dask):
     """Pandas-backed timeseries data storage (uses Dask for parquet functions)."""
 
-    def __init__(self):
-        super(Store, self).__init__()
+    def __init__(self, url, storage_options={}):
+        super().__init__(url, storage_options=storage_options)
 
     def load(
         self, name, from_date=None, to_date=None, freq=None, time_travel=None, **kwargs
@@ -39,8 +40,6 @@ class Store(Dask):
         else:
             # Filter on date range
             pdf = pdf.loc[pd.Timestamp(from_date) : pd.Timestamp(to_date)]
-        if "partition" in pdf.columns:
-            pdf = pdf.drop(columns="partition")
         return pdf
 
     def transform(self, df, func):

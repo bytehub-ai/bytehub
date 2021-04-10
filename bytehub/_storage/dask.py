@@ -2,13 +2,16 @@ from ._base import BaseStore
 import posixpath
 import dask.dataframe as dd
 import pandas as pd
+import numpy as np
+import pyarrow as pa
+import fsspec
 
 
 class Store(BaseStore):
     """Dask-backed timeseries data storage."""
 
-    def __init__(self):
-        super(Store, self).__init__()
+    def __init__(self, url, storage_options={}):
+        super().__init__(url, storage_options=storage_options)
 
     @staticmethod
     def _clean_dict(d):
@@ -25,7 +28,7 @@ class Store(BaseStore):
             feature_path = posixpath.join(paths[0], "feature", name)
         else:
             feature_path = posixpath.join(paths[0], "feature")
-        return fs, None
+        return fs, feature_path
 
     def _list_partitions(self, name, n=None, reverse=False):
         """List the available partitions for a feature."""
@@ -105,6 +108,8 @@ class Store(BaseStore):
                 columns=["time", "created_time", "value", "partition"]
             ).set_index("time")
             ddf = dd.from_pandas(empty_df, chunksize=1)
+        if "partition" in ddf.columns:
+            ddf = ddf.drop(columns="partition")
         # Apply time-travel
         if time_travel:
             ddf = ddf.reset_index()
@@ -117,10 +122,14 @@ class Store(BaseStore):
                 meta={
                     "value": "object",
                     "created_time": "datetime64[ns]",
-                    "partition": str(ddf["partition"].dtype),
                 },
             )
         return ddf
+
+    def ls(self):
+        fs, path = self._fs()
+        feature_names = [p.split("/")[-1] for p in fs.ls(path)]
+        return feature_names
 
     def load(
         self, name, from_date=None, to_date=None, freq=None, time_travel=None, **kwargs
@@ -166,15 +175,13 @@ class Store(BaseStore):
         else:
             # Filter on date range
             ddf = ddf.loc[pd.Timestamp(from_date) : pd.Timestamp(to_date)]
-        if "partition" in ddf.columns:
-            ddf = ddf.drop(columns="partition")
         #  Repartition to remove empty chunks
         ddf = ddf.repartition(partition_size="25MB")
         return ddf
 
     def last(self, name, **kwargs):
         ddf = self._read(name, **kwargs)
-        result = df.tail(1)
+        result = ddf.tail(1)
         if result.empty:
             return None
         else:
@@ -206,7 +213,7 @@ class Store(BaseStore):
         if "time" in ddf.columns:
             ddf = ddf.assign(time=ddf.time.astype("datetime64[ns]"))
             # Add partition column
-            ddf = ddf.assign(partition=apply_partition(partition, ddf.time))
+            ddf = ddf.assign(partition=self._apply_partition(partition, ddf.time))
             ddf = ddf.set_index("time")
         else:
             raise ValueError(
@@ -227,7 +234,7 @@ class Store(BaseStore):
                 lambda df: df.assign(value=df.value.apply(pd.io.json.dumps))
             )
         # Save
-        self._write(ddf, name, append=True)
+        self._write(name, ddf, append=True)
 
     def delete(self, name):
         fs, feature_path = self._fs(name)

@@ -8,7 +8,7 @@ available_backends = {}
 def _import_backend(name):
     try:
         mod = importlib.import_module("." + name, __name__)
-        available_backends[name] = mod
+        available_backends[name] = mod.Store
     except ImportError:
         pass
 

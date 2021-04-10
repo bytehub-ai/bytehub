@@ -31,6 +31,10 @@ class BaseStore(ABC):
         else:
             raise NotImplementedError(f"Unrecognised dataframe type: {type(dfs[0])}")
 
+    def ls(self):
+        """List features contained in storage."""
+        raise NotADirectoryError()
+
     def load(
         self, name, from_date=None, to_date=None, freq=None, time_travel=None, **kwargs
     ):
@@ -42,7 +46,7 @@ class BaseStore(ABC):
         raise NotImplementedError()
 
     def last(self, name, **kwargs):
-        """Retrieves last value from the timeseries."""
+        """Retrieves last index from the timeseries."""
         raise NotImplementedError()
 
     def transform(self, df, func):
@@ -61,10 +65,6 @@ class BaseStore(ABC):
         ddf = self._export(from_name)
         # Import to destination
         destination_store._import(to_name, ddf)
-
-    def clean(self):
-        """Remove unused data from storage."""
-        raise NotImplementedError()
 
     def _export(self, name):
         """Export a timeseries as standardised dask dataframe."""
