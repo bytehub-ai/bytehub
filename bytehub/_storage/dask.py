@@ -247,22 +247,6 @@ class Store(BaseStore):
         except FileNotFoundError:
             pass
 
-    def transform(self, df, func):
-        transformed = func(df)
-        # Make sure output has a single column named 'value'
-        if isinstance(transformed, pd.Series) or isinstance(transformed, dd.Series):
-            transformed = transformed.to_frame("value")
-        if not isinstance(transformed, pd.DataFrame):
-            raise RuntimeError(
-                f"This featurestore has a Dask backend, therefore transforms should return Dask dataframes"
-            )
-        if len(transformed.columns) != 1:
-            raise RuntimeError(
-                f"Transform function should return a dataframe with a datetime index and single value column"
-            )
-        transformed.columns = ["value"]
-        return transformed
-
     def _export(self, name):
         # Read the data
         feature_path = self._full_feature_path(name)

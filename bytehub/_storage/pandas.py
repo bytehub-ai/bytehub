@@ -41,19 +41,3 @@ class Store(Dask):
             # Filter on date range
             pdf = pdf.loc[pd.Timestamp(from_date) : pd.Timestamp(to_date)]
         return pdf
-
-    def transform(self, df, func):
-        transformed = func(df)
-        # Make sure output has a single column named 'value'
-        if isinstance(transformed, pd.Series) or isinstance(transformed, dd.Series):
-            transformed = transformed.to_frame("value")
-        if not isinstance(transformed, pd.DataFrame):
-            raise RuntimeError(
-                f"This featurestore has a Pandas backend, therefore transforms should return Pandas dataframes"
-            )
-        if len(transformed.columns) != 1:
-            raise RuntimeError(
-                f"Transform function should return a dataframe with a datetime index and single value column"
-            )
-        transformed.columns = ["value"]
-        return transformed

@@ -13,24 +13,6 @@ class BaseStore(ABC):
         self.url = url
         self.storage_options = storage_options
 
-    @staticmethod
-    def concat(dfs):
-        """"Concat dataframes for multiple features."""
-        if len(dfs) == 0 or isinstance(dfs[0], pd.DataFrame):
-            # Use Pandas concat
-            return pd.concat(dfs, join="outer", axis=1).ffill()
-        elif isinstance(dfs[0], dd.DataFrame):
-            # Use Dask concat
-            dfs = functools.reduce(
-                lambda left, right: dd.merge(
-                    left, right, left_index=True, right_index=True, how="outer"
-                ),
-                [df for df in dfs],
-            )
-            return dfs.ffill()
-        else:
-            raise NotImplementedError(f"Unrecognised dataframe type: {type(dfs[0])}")
-
     def ls(self):
         """List features contained in storage."""
         raise NotADirectoryError()
@@ -47,10 +29,6 @@ class BaseStore(ABC):
 
     def last(self, name, **kwargs):
         """Retrieves last index from the timeseries."""
-        raise NotImplementedError()
-
-    def transform(self, df, func):
-        """Transform a timeseries dataframe."""
         raise NotImplementedError()
 
     def delete(self, name):
