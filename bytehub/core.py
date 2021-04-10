@@ -140,7 +140,7 @@ class CoreFeatureStore(BaseFeatureStore):
     def update_namespace(self, name, **kwargs):
         self.__class__._validate_kwargs(
             kwargs,
-            valid=["description", "storage_options", "backend", "meta"],
+            valid=["description", "storage_options", "meta"],
         )
         self._update(model.Namespace, name=name, payload=kwargs)
 

@@ -1,6 +1,7 @@
 from ._base import BaseStore
 import posixpath
 import dask.dataframe as dd
+import dask
 import pandas as pd
 import numpy as np
 import pyarrow as pa

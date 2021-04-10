@@ -175,7 +175,7 @@ class Feature(Base, FeatureStoreMixin):
         store.save(self.name, df, partition=self.partition, serialized=self.serialized)
 
     def load_transform(
-        self, from_date, to_date, freq, time_travel, mode, last=False, callers=[]
+        self, from_date, to_date, freq, time_travel, last=False, callers=[]
     ):
         # Get the SQLAlchemy session for this feature
         session = sa.inspect(self).session
@@ -206,7 +206,6 @@ class Feature(Base, FeatureStoreMixin):
                 to_date=to_date,
                 freq=freq,
                 time_travel=time_travel,
-                mode=mode,
                 last=last,
                 callers=[*callers, self.full_name],
             )
@@ -216,7 +215,7 @@ class Feature(Base, FeatureStoreMixin):
         # Make sure columns are in the same order as args
         dfs = dfs[self.transform["args"]]
         # Apply transform function
-        transformed = ts.transform(dfs, func, mode)
+        transformed = ts.transform(dfs, func)
         return transformed
 
     def load(
@@ -225,7 +224,6 @@ class Feature(Base, FeatureStoreMixin):
         to_date=None,
         freq=None,
         time_travel=None,
-        mode="pandas",
         last=False,
         callers=[],
     ):
@@ -236,7 +234,6 @@ class Feature(Base, FeatureStoreMixin):
                 to_date=to_date,
                 freq=freq,
                 time_travel=time_travel,
-                mode=mode,
                 last=last,
                 callers=callers,
             )

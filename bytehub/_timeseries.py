@@ -26,19 +26,19 @@ def concat(dfs):
         raise NotImplementedError(f"Unrecognised dataframe type: {type(dfs[0])}")
 
 
-def transform(df, func, mode):
+def transform(df, func):
     """Transform dataframe using function."""
     transformed = func(df)
     # Make sure output has a single column named 'value'
     if isinstance(transformed, pd.Series) or isinstance(transformed, dd.Series):
         transformed = transformed.to_frame("value")
-    if mode == "pandas" and not isinstance(transformed, pd.DataFrame):
+    if isinstance(df, pd.DataFrame) and not isinstance(transformed, pd.DataFrame):
         raise RuntimeError(
-            f"This featurestore has a Pandas backend, therefore transforms should return Pandas dataframes"
+            f"Transforms in this namespace should return Pandas dataframes or series"
         )
-    if mode == "dask" and not isinstance(transformed, pd.DataFrame):
+    if isinstance(df, dd.DataFrame) and not isinstance(transformed, dd.DataFrame):
         raise RuntimeError(
-            f"This featurestore has a Dask backend, therefore transforms should return Dask dataframes"
+            f"Transforms in this namespace should return Dask dataframes or series"
         )
     if len(transformed.columns) != 1:
         raise RuntimeError(
