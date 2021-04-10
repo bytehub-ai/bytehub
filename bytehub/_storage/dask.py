@@ -31,6 +31,9 @@ class Store(BaseStore):
             feature_path = posixpath.join(paths[0], "feature")
         return fs, feature_path
 
+    def _full_feature_path(self, name):
+        return posixpath.join(self.url, "feature", name)
+
     def _list_partitions(self, name, n=None, reverse=False):
         """List the available partitions for a feature."""
         fs, feature_path = self._fs(name)
@@ -57,7 +60,7 @@ class Store(BaseStore):
 
     def _write(self, name, ddf, **kwargs):
         # Write to output location
-        _, feature_path = self._fs(name)
+        feature_path = self._full_feature_path(name)
         # Build schema
         schema = {"time": pa.timestamp("ns"), "created_time": pa.timestamp("ns")}
         for field in pa.Table.from_pandas(ddf.head()).schema:
@@ -92,7 +95,7 @@ class Store(BaseStore):
                 filters.append(("partition", "==", p))
         filters = [filters] if filters else None
         # Read the data
-        _, feature_path = self._fs(name)
+        feature_path = self._full_feature_path(name)
         try:
             ddf = dd.read_parquet(
                 feature_path,
@@ -262,7 +265,7 @@ class Store(BaseStore):
 
     def _export(self, name):
         # Read the data
-        fs, feature_path = self._fs(name)
+        feature_path = self._full_feature_path(name)
         try:
             ddf = dd.read_parquet(
                 feature_path,

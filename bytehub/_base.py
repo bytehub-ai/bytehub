@@ -84,7 +84,8 @@ class BaseFeatureStore(ABC):
             name (str): name of the namespace.
             description (str, optional): description for this namespace.
             url (str): url of data store.
-            storage_options (dict, optional): storage options to be passed to Dask.
+            storage_options (dict, optional): storage options, e.g. access credentials.
+            backend (str, optional): storage backend, see bytehub._storage.available_backends, defaults to `"pandas"`.
             meta (dict, optional): key/value pairs of metadata.
         """
         raise NotImplementedError()
