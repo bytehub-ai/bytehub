@@ -1,4 +1,4 @@
-from abc import ABC
+from abc import ABC, abstractmethod
 import functools
 import pandas as pd
 import dask.dataframe as dd
@@ -13,24 +13,33 @@ class BaseStore(ABC):
         self.url = url
         self.storage_options = storage_options
 
+    @abstractmethod
     def ls(self):
         """List features contained in storage."""
         raise NotADirectoryError()
 
+    @abstractmethod
     def load(
         self, name, from_date=None, to_date=None, freq=None, time_travel=None, **kwargs
     ):
         """Load a single timeseries dataframe from storage."""
         raise NotImplementedError()
 
+    @abstractmethod
     def save(self, name, df, **kwargs):
         """Save a timeseries dataframe."""
+        raise NotImplementedError()
+
+    @abstractmethod
+    def first(self, name, **kwargs):
+        """Retrieves first index from the timeseries."""
         raise NotImplementedError()
 
     def last(self, name, **kwargs):
         """Retrieves last index from the timeseries."""
         raise NotImplementedError()
 
+    @abstractmethod
     def delete(self, name):
         """Delete the data for a feature."""
         raise NotImplementedError()
@@ -44,10 +53,12 @@ class BaseStore(ABC):
         # Import to destination
         destination_store._import(to_name, ddf)
 
+    @abstractmethod
     def _export(self, name):
         """Export a timeseries as standardised dask dataframe."""
         raise NotImplementedError()
 
+    @abstractmethod
     def _import(self, name, ddf):
         """Import a timeseries from standardised dask dataframe."""
         raise NotImplementedError()

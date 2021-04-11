@@ -464,8 +464,31 @@ def test_resampling(fs):
     ]
     assert compare_df(result, compare)
 
+    # Non-contiguous resampling
+    dts = pd.date_range("2021-01-01", "2021-01-05")
+    df3 = pd.DataFrame(
+        {"time": dts, "test/resample3": np.random.randn(len(dts))}
+    ).set_index("time")
+    dts = pd.date_range("2021-01-10", "2021-02-15")
+    df4 = pd.DataFrame(
+        {"time": dts, "test/resample4": np.random.randn(len(dts))}
+    ).set_index("time")
+    fs.create_feature("test/resample3", description="df3")
+    fs.create_feature("test/resample4", description="df4")
+    fs.save_dataframe(df3)
+    fs.save_dataframe(df4)
+
+    compare = pd.concat([df3, df4], join="outer", axis=1).resample("1d").ffill().ffill()
+    compare = compare[compare.index >= pd.Timestamp("2021-01-14")]
+    result = fs.load_dataframe(
+        ["test/resample3", "test/resample4"], from_date="2021-01-14", freq="1d"
+    )
+    assert compare_df(result, compare)
+
     fs.delete_feature("test/resample1")
     fs.delete_feature("test/resample2")
+    fs.delete_feature("test/resample3")
+    fs.delete_feature("test/resample4")
 
 
 def test_serialized_features(fs):

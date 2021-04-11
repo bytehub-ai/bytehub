@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 import pyarrow as pa
 import fsspec
+import warnings
 
 
 class Store(BaseStore):
@@ -138,11 +139,20 @@ class Store(BaseStore):
     def load(
         self, name, from_date=None, to_date=None, freq=None, time_travel=None, **kwargs
     ):
-        ddf = self._read(name, from_date, to_date, freq, time_travel, **kwargs)
+        # Find the last value _before_ time range to carry over
+        last_before = from_date
+        if from_date:
+            _, last_before = self._range(
+                name, to_date=from_date, time_travel=time_travel
+            )
+            last_before = last_before["time"]
+        ddf = self._read(name, last_before, to_date, freq, time_travel, **kwargs)
         if not from_date:
             from_date = ddf.index.min().compute()  # First value in data
         if not to_date:
             to_date = ddf.index.max().compute()  # Last value in data
+        if pd.Timestamp(to_date) < pd.Timestamp(from_date):
+            to_date = from_date
         # Keep only last created_time for each index timestamp
         delayed_apply = dask.delayed(
             # Use pandas on each dask partition
@@ -174,7 +184,7 @@ class Store(BaseStore):
                 samples,
                 left_index=True,
                 right_index=True,
-                how="inner",
+                how="right",
             )
         else:
             # Filter on date range
@@ -183,13 +193,32 @@ class Store(BaseStore):
         ddf = ddf.repartition(partition_size="25MB")
         return ddf
 
-    def last(self, name, **kwargs):
+    def _range(self, name, **kwargs):
         ddf = self._read(name, **kwargs)
-        result = ddf.tail(1)
-        if result.empty:
-            return None
-        else:
-            return result["value"].iloc[0]
+        # Don't warn when querying empty feature
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            first = ddf.head(1)
+            last = ddf.tail(1)
+        first = (
+            {"time": None, "value": None}
+            if first.empty
+            else {"time": first.index[0], "value": first["value"].iloc[0]}
+        )
+        last = (
+            {"time": None, "value": None}
+            if last.empty
+            else {"time": last.index[0], "value": last["value"].iloc[0]}
+        )
+        return first, last
+
+    def first(self, name, **kwargs):
+        first, _ = self._range(name, **kwargs)
+        return first["value"]
+
+    def last(self, name, **kwargs):
+        _, last = self._range(name, **kwargs)
+        return last["value"]
 
     def save(self, name, df, **kwargs):
         if df.empty:
