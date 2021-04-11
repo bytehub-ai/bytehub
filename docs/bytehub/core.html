@@ -22,7 +22,7 @@
 <h1 class="title">Module <code>bytehub.core</code></h1>
 </header>
 <section id="section-intro">
-<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/da6f83b3ed929b0a45f7e77cf5df4a8a026d7e5b/bytehub/core.py#L0-L340" class="git-link">Browse git</a></div>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/807b293bdf396638ed1626f01f4259ab35f8008c/bytehub/core.py#L0-L330" class="git-link">Browse git</a></div>
 </section>
 <section>
 </section>
@@ -35,7 +35,7 @@
 <dl>
 <dt id="bytehub.core.CoreFeatureStore"><code class="flex name class">
 <span>class <span class="ident">CoreFeatureStore</span></span>
-<span>(</span><span>connection_string='sqlite:///bytehub.db', backend='pandas', connect_args={})</span>
+<span>(</span><span>connection_string='sqlite:///bytehub.db', connect_args={})</span>
 </code></dt>
 <dd>
 <div class="desc"><p><strong>Core Feature Store</strong></p>
@@ -51,14 +51,11 @@ for <code>create_feature</code>, <code>update_feature</code>, etc., use either:<
 <dt><strong><code>connection_string</code></strong> :&ensp;<code>str</code></dt>
 <dd>SQLAlchemy connection string for database
 containing feature store metadata - defaults to local sqlite file.</dd>
-<dt><strong><code>backend</code></strong> :&ensp;<code>str</code>, optional</dt>
-<dd>either <code>"pandas"</code> (default) or <code>"dask"</code>, specifying the type
-of dataframes returned by <code>load_dataframe</code>.</dd>
 <dt><strong><code>connect_args</code></strong> :&ensp;<code>dict</code>, optional</dt>
 <dd>dictionary of <a href="https://docs.sqlalchemy.org/en/14/core/engines.html#sqlalchemy.create_engine.params.connect_args">connection arguments</a>
 to pass to SQLAlchemy.</dd>
 </dl></div>
-<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/da6f83b3ed929b0a45f7e77cf5df4a8a026d7e5b/bytehub/core.py#L19-L341" class="git-link">Browse git</a></div>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/807b293bdf396638ed1626f01f4259ab35f8008c/bytehub/core.py#L14-L331" class="git-link">Browse git</a></div>
 <h3>Ancestors</h3>
 <ul class="hlist">
 <li>bytehub._base.BaseFeatureStore</li>
@@ -77,7 +74,7 @@ Run this to free up disk space after deleting features</p>
 <dt><strong><code>name</code></strong> :&ensp;<code>str</code></dt>
 <dd>namespace to clean</dd>
 </dl></div>
-<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/da6f83b3ed929b0a45f7e77cf5df4a8a026d7e5b/bytehub/core.py#L160-L167" class="git-link">Browse git</a></div>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/807b293bdf396638ed1626f01f4259ab35f8008c/bytehub/core.py#L151-L158" class="git-link">Browse git</a></div>
 </dd>
 <dt id="bytehub.core.CoreFeatureStore.clone_feature"><code class="name flex">
 <span>def <span class="ident">clone_feature</span></span>(<span>self, name, namespace=None, **kwargs)</span>
@@ -95,7 +92,7 @@ Run this to free up disk space after deleting features</p>
 <dt><strong><code>from_namespace</code></strong> :&ensp;<code>str</code>, optional</dt>
 <dd>namespace of the existing feature.</dd>
 </dl></div>
-<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/da6f83b3ed929b0a45f7e77cf5df4a8a026d7e5b/bytehub/core.py#L189-L217" class="git-link">Browse git</a></div>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/807b293bdf396638ed1626f01f4259ab35f8008c/bytehub/core.py#L180-L208" class="git-link">Browse git</a></div>
 </dd>
 <dt id="bytehub.core.CoreFeatureStore.create_feature"><code class="name flex">
 <span>def <span class="ident">create_feature</span></span>(<span>self, name, namespace=None, **kwargs)</span>
@@ -121,7 +118,7 @@ over time.</dd>
 <dt><strong><code>meta</code></strong> :&ensp;<code>dict</code>, optional</dt>
 <dd>key/value pairs of metadata.</dd>
 </dl></div>
-<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/da6f83b3ed929b0a45f7e77cf5df4a8a026d7e5b/bytehub/core.py#L181-L187" class="git-link">Browse git</a></div>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/807b293bdf396638ed1626f01f4259ab35f8008c/bytehub/core.py#L172-L178" class="git-link">Browse git</a></div>
 </dd>
 <dt id="bytehub.core.CoreFeatureStore.create_namespace"><code class="name flex">
 <span>def <span class="ident">create_namespace</span></span>(<span>self, name, **kwargs)</span>
@@ -137,11 +134,13 @@ over time.</dd>
 <dt><strong><code>url</code></strong> :&ensp;<code>str</code></dt>
 <dd>url of data store.</dd>
 <dt><strong><code>storage_options</code></strong> :&ensp;<code>dict</code>, optional</dt>
-<dd>storage options to be passed to Dask.</dd>
+<dd>storage options, e.g. access credentials.</dd>
+<dt><strong><code>backend</code></strong> :&ensp;<code>str</code>, optional</dt>
+<dd>storage backend, see bytehub._storage.available_backends, defaults to <code>"pandas"</code>.</dd>
 <dt><strong><code>meta</code></strong> :&ensp;<code>dict</code>, optional</dt>
 <dd>key/value pairs of metadata.</dd>
 </dl></div>
-<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/da6f83b3ed929b0a45f7e77cf5df4a8a026d7e5b/bytehub/core.py#L138-L144" class="git-link">Browse git</a></div>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/807b293bdf396638ed1626f01f4259ab35f8008c/bytehub/core.py#L129-L135" class="git-link">Browse git</a></div>
 </dd>
 <dt id="bytehub.core.CoreFeatureStore.delete_feature"><code class="name flex">
 <span>def <span class="ident">delete_feature</span></span>(<span>self, name, namespace=None, delete_data=False)</span>
@@ -159,7 +158,7 @@ over time.</dd>
 for this feature, otherwise default behaviour is to delete the feature store
 metadata but leave the stored timeseries values intact.</dd>
 </dl></div>
-<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/da6f83b3ed929b0a45f7e77cf5df4a8a026d7e5b/bytehub/core.py#L219-L220" class="git-link">Browse git</a></div>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/807b293bdf396638ed1626f01f4259ab35f8008c/bytehub/core.py#L210-L211" class="git-link">Browse git</a></div>
 </dd>
 <dt id="bytehub.core.CoreFeatureStore.delete_namespace"><code class="name flex">
 <span>def <span class="ident">delete_namespace</span></span>(<span>self, name)</span>
@@ -171,7 +170,7 @@ metadata but leave the stored timeseries values intact.</dd>
 <dt><strong><code>name</code></strong></dt>
 <dd>namespace to be deleted.</dd>
 </dl></div>
-<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/da6f83b3ed929b0a45f7e77cf5df4a8a026d7e5b/bytehub/core.py#L153-L158" class="git-link">Browse git</a></div>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/807b293bdf396638ed1626f01f4259ab35f8008c/bytehub/core.py#L144-L149" class="git-link">Browse git</a></div>
 </dd>
 <dt id="bytehub.core.CoreFeatureStore.last"><code class="name flex">
 <span>def <span class="ident">last</span></span>(<span>self, features)</span>
@@ -188,7 +187,7 @@ metadata but leave the stored timeseries values intact.</dd>
 <dt><code>dict</code></dt>
 <dd>dictionary of name, last value pairs.</dd>
 </dl></div>
-<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/da6f83b3ed929b0a45f7e77cf5df4a8a026d7e5b/bytehub/core.py#L325-L341" class="git-link">Browse git</a></div>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/807b293bdf396638ed1626f01f4259ab35f8008c/bytehub/core.py#L315-L331" class="git-link">Browse git</a></div>
 </dd>
 <dt id="bytehub.core.CoreFeatureStore.list_features"><code class="name flex">
 <span>def <span class="ident">list_features</span></span>(<span>self, **kwargs)</span>
@@ -212,7 +211,7 @@ metadata but leave the stored timeseries values intact.</dd>
 <dt><code>pd.DataFrame</code></dt>
 <dd>DataFrame of features and metadata.</dd>
 </dl></div>
-<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/da6f83b3ed929b0a45f7e77cf5df4a8a026d7e5b/bytehub/core.py#L169-L179" class="git-link">Browse git</a></div>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/807b293bdf396638ed1626f01f4259ab35f8008c/bytehub/core.py#L160-L170" class="git-link">Browse git</a></div>
 </dd>
 <dt id="bytehub.core.CoreFeatureStore.list_namespaces"><code class="name flex">
 <span>def <span class="ident">list_namespaces</span></span>(<span>self, **kwargs)</span>
@@ -234,7 +233,7 @@ metadata but leave the stored timeseries values intact.</dd>
 <dt><code>pd.DataFrame</code></dt>
 <dd>DataFrame of namespaces and metadata.</dd>
 </dl></div>
-<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/da6f83b3ed929b0a45f7e77cf5df4a8a026d7e5b/bytehub/core.py#L130-L136" class="git-link">Browse git</a></div>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/807b293bdf396638ed1626f01f4259ab35f8008c/bytehub/core.py#L121-L127" class="git-link">Browse git</a></div>
 </dd>
 <dt id="bytehub.core.CoreFeatureStore.load_dataframe"><code class="name flex">
 <span>def <span class="ident">load_dataframe</span></span>(<span>self, features, from_date=None, to_date=None, freq=None, time_travel=None)</span>
@@ -260,7 +259,7 @@ returned timeseries values, useful in forecasting applications.</dd>
 <dt><code>Union[pd.DataFrame, dask.DataFrame]</code></dt>
 <dd>depending on which backend was specified in the feature store.</dd>
 </dl></div>
-<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/da6f83b3ed929b0a45f7e77cf5df4a8a026d7e5b/bytehub/core.py#L255-L286" class="git-link">Browse git</a></div>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/807b293bdf396638ed1626f01f4259ab35f8008c/bytehub/core.py#L246-L276" class="git-link">Browse git</a></div>
 </dd>
 <dt id="bytehub.core.CoreFeatureStore.save_dataframe"><code class="name flex">
 <span>def <span class="ident">save_dataframe</span></span>(<span>self, df, name=None, namespace=None)</span>
@@ -280,7 +279,7 @@ For multiple features name the columns using <code>namespace/name</code>.</dd>
 <dt><strong><code>namespace</code></strong> :&ensp;<code>str</code>, optional</dt>
 <dd>namespace, if not included in DataFrame column name.</dd>
 </dl></div>
-<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/da6f83b3ed929b0a45f7e77cf5df4a8a026d7e5b/bytehub/core.py#L288-L323" class="git-link">Browse git</a></div>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/807b293bdf396638ed1626f01f4259ab35f8008c/bytehub/core.py#L278-L313" class="git-link">Browse git</a></div>
 </dd>
 <dt id="bytehub.core.CoreFeatureStore.transform"><code class="name flex">
 <span>def <span class="ident">transform</span></span>(<span>self, name, namespace=None, from_features=[])</span>
@@ -298,7 +297,7 @@ of tranformed values.</p>
 <dt><strong><code>from_features</code></strong> :&ensp;<code>list</code></dt>
 <dd>list of features which should be transformed by this one</dd>
 </dl></div>
-<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/da6f83b3ed929b0a45f7e77cf5df4a8a026d7e5b/bytehub/core.py#L229-L253" class="git-link">Browse git</a></div>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/807b293bdf396638ed1626f01f4259ab35f8008c/bytehub/core.py#L220-L244" class="git-link">Browse git</a></div>
 </dd>
 <dt id="bytehub.core.CoreFeatureStore.update_feature"><code class="name flex">
 <span>def <span class="ident">update_feature</span></span>(<span>self, name, namespace=None, **kwargs)</span>
@@ -319,7 +318,7 @@ of tranformed values.</p>
 <dd>updated key/value pairs of metadata.
 To remove metadata, update using <code>{"key_to_remove": None}</code>.</dd>
 </dl></div>
-<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/da6f83b3ed929b0a45f7e77cf5df4a8a026d7e5b/bytehub/core.py#L222-L227" class="git-link">Browse git</a></div>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/807b293bdf396638ed1626f01f4259ab35f8008c/bytehub/core.py#L213-L218" class="git-link">Browse git</a></div>
 </dd>
 <dt id="bytehub.core.CoreFeatureStore.update_namespace"><code class="name flex">
 <span>def <span class="ident">update_namespace</span></span>(<span>self, name, **kwargs)</span>
@@ -338,7 +337,7 @@ To remove metadata, update using <code>{"key_to_remove": None}</code>.</dd>
 <dd>updated key/value pairs of metadata.
 To remove metadata, update using <code>{"key_to_remove": None}</code>.</dd>
 </dl></div>
-<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/da6f83b3ed929b0a45f7e77cf5df4a8a026d7e5b/bytehub/core.py#L146-L151" class="git-link">Browse git</a></div>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/807b293bdf396638ed1626f01f4259ab35f8008c/bytehub/core.py#L137-L142" class="git-link">Browse git</a></div>
 </dd>
 </dl>
 </dd>

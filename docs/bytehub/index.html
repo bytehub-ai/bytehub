@@ -42,7 +42,7 @@ fs = bh.FeatureStore()
 <pre><code>fs = bh.CloudFeatureStore()
 </code></pre>
 <p>See <a href="https://docs.bytehub.ai">https://docs.bytehub.ai</a> for examples and tutorials.</p>
-<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/da6f83b3ed929b0a45f7e77cf5df4a8a026d7e5b/bytehub/__init__.py#L0-L62" class="git-link">Browse git</a></div>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/807b293bdf396638ed1626f01f4259ab35f8008c/bytehub/__init__.py#L0-L49" class="git-link">Browse git</a></div>
 </section>
 <section>
 <h2 class="section-title" id="header-submodules">Sub-modules</h2>
@@ -67,7 +67,7 @@ fs = bh.FeatureStore()
 <h2 class="section-title" id="header-functions">Functions</h2>
 <dl>
 <dt id="bytehub.FeatureStore"><code class="name flex">
-<span>def <span class="ident">FeatureStore</span></span>(<span>connection_string='sqlite:///bytehub.db', backend='pandas', **kwargs)</span>
+<span>def <span class="ident">FeatureStore</span></span>(<span>connection_string='sqlite:///bytehub.db', **kwargs)</span>
 </code></dt>
 <dd>
 <div class="desc"><p>Factory method to create Feature Store objects.</p>
@@ -77,9 +77,6 @@ fs = bh.FeatureStore()
 <dd>SQLAlchemy connection string for database
 containing feature store metadata (defaults to local sqlite file)
 or an HTTPS endpoint to a cloud-hosted feature store.</dd>
-<dt><strong><code>backend</code></strong> :&ensp;<code>str</code></dt>
-<dd>either <code>"pandas"</code> (default) or <code>"dask"</code>, specifying the type
-of dataframes returned by <code>load_dataframe</code>.</dd>
 <dt><strong><code>**kwargs</code></strong></dt>
 <dd>Additional options to be passed to the Feature Store constructor.</dd>
 </dl>
@@ -88,7 +85,7 @@ of dataframes returned by <code>load_dataframe</code>.</dd>
 <dt><code>Union[CoreFeatureStore, CloudFeatureStore]</code></dt>
 <dd>Feature Store object.</dd>
 </dl></div>
-<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/da6f83b3ed929b0a45f7e77cf5df4a8a026d7e5b/bytehub/__init__.py#L33-L63" class="git-link">Browse git</a></div>
+<div class="git-link-div"><a href="https://github.com/bytehub-ai/bytehub/blob/807b293bdf396638ed1626f01f4259ab35f8008c/bytehub/__init__.py#L33-L50" class="git-link">Browse git</a></div>
 </dd>
 </dl>
 </section>
