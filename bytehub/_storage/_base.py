@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
 import functools
-import pandas as pd
-import dask.dataframe as dd
+import types
 
 
 class BaseStore(ABC):
@@ -51,14 +50,18 @@ class BaseStore(ABC):
         # Export existing data
         ddf = self._export(from_name)
         # Import to destination
-        destination_store._import(to_name, ddf)
+        if isinstance(ddf, types.GeneratorType):
+            for ddf_ in ddf:
+                destination_store._import(to_name, ddf_)
+        else:
+            destination_store._import(to_name, ddf)
 
     @abstractmethod
     def _export(self, name):
-        """Export a timeseries as standardised dask dataframe."""
+        """Export a timeseries as standardised dataframe."""
         raise NotImplementedError()
 
     @abstractmethod
     def _import(self, name, ddf):
-        """Import a timeseries from standardised dask dataframe."""
+        """Import a timeseries from standardised dataframe."""
         raise NotImplementedError()
