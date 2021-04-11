@@ -16,7 +16,8 @@ backends = [
     for key in os.environ.keys()
     if key.startswith("CLOUDSTORE_")
 ]
-backends.append({"path": "/tmp", "storage_options": {}})
+backends.append({"path": "/tmp", "storage_options": {}, "backend": "pandas"})
+backends.append({"path": "/tmp", "storage_options": {}, "backend": "dask"})
 
 
 def random_string(n):
@@ -33,6 +34,28 @@ def build_url(filesystem):
     return f"{protocol}://{location}"
 
 
+def compare_df(df1, df2):
+    if isinstance(df1, dd.DataFrame):
+        df1 = df1.compute()
+    if isinstance(df1, dd.DataFrame):
+        df2 = df2.compute()
+    return df1.equals(df2)
+
+
+def compare_series(s1, s2):
+    if isinstance(s1, dd.Series):
+        s1 = s1.compute()
+    if isinstance(s2, dd.Series):
+        s2 = s2.compute()
+    return s1.equals(s2)
+
+
+def empty_df(df):
+    if isinstance(df, dd.DataFrame):
+        df = df.compute()
+    return df.empty
+
+
 @pytest.fixture
 def file_name():
     return random_string(10)
@@ -42,9 +65,10 @@ def file_name():
 def filesystem(request):
     path = request.param["path"]
     storage_options = request.param["storage_options"]
+    storage_backend = request.param.get("backend", "pandas")
 
     fs, _, paths = fsspec.get_fs_token_paths(path, storage_options=storage_options)
-    return {"fs": fs, "location": paths[0]}
+    return {"fs": fs, "location": paths[0], "backend": storage_backend}
 
 
 @pytest.fixture
@@ -58,6 +82,7 @@ def fs(filesystem, file_name):
         "test",
         url=posixpath.join(build_url(filesystem), file_name),
         storage_options=filesystem["fs"].storage_options,
+        backend=filesystem["backend"],
     )
 
     yield fs
@@ -132,6 +157,7 @@ def test_namespaces(fs, filesystem):
         description="ns1",
         url=posixpath.join(build_url(filesystem), ns1),
         storage_options=filesystem["fs"].storage_options,
+        backend=filesystem["backend"],
     )
 
     # Create with duplicate url should raise exception
@@ -141,6 +167,7 @@ def test_namespaces(fs, filesystem):
             description="ns2",
             url=posixpath.join(build_url(filesystem), ns1),
             storage_options=filesystem["fs"].storage_options,
+            backend=filesystem["backend"],
         )
 
     fs.create_namespace(
@@ -148,6 +175,7 @@ def test_namespaces(fs, filesystem):
         description="ns2",
         url=posixpath.join(build_url(filesystem), ns2),
         storage_options=filesystem["fs"].storage_options,
+        backend=filesystem["backend"],
     )
 
     namespaces = fs.list_namespaces()
@@ -313,7 +341,7 @@ def test_clone_features(fs):
     assert feature.serialized == True
     # Check that data was copied
     result = fs.load_dataframe("test/cloned-feature")
-    assert result.equals(df1.rename(columns={"value": "test/cloned-feature"}))
+    compare_df(result, df1.rename(columns={"value": "test/cloned-feature"}))
 
     fs.delete_feature("test/old-feature")
     fs.delete_feature("test/cloned-feature")
@@ -356,13 +384,16 @@ def test_dataframes(fs):
     fs.save_dataframe(df1, "test/df1")
 
     # Load back and check
-    assert fs.load_dataframe("test/df1").equals(
-        df1.rename(columns={"value": "test/df1"})
+    assert compare_df(
+        fs.load_dataframe("test/df1"), df1.rename(columns={"value": "test/df1"})
     )
-    assert fs.load_dataframe("test/df2").equals(
-        df2.set_index("time").rename(columns={"value": "test/df2"})
+    assert compare_df(
+        fs.load_dataframe("test/df2"),
+        df2.set_index("time").rename(columns={"value": "test/df2"}),
     )
-    assert fs.load_dataframe(["test/df3", "test/df4"]).equals(df3.set_index("time"))
+    assert compare_df(
+        fs.load_dataframe(["test/df3", "test/df4"]), df3.set_index("time")
+    )
 
     # Delete features
     fs.delete_feature("test/df1")
@@ -389,18 +420,17 @@ def test_resampling(fs):
     fs.save_dataframe(df2)
 
     # Pandas tests
-    fs.mode = "pandas"
     result = fs.load_dataframe(["test/resample1", "test/resample2"])
     compare = pd.concat([df1, df2], join="outer", axis=1).ffill()
-    assert result.equals(compare)
+    assert compare_df(result, compare)
     result = fs.load_dataframe(["test/resample1", "test/resample2"], freq="2d")
     compare = pd.concat([df1, df2], join="outer", axis=1).resample("2d").ffill().ffill()
-    assert result.equals(compare)
+    assert compare_df(result, compare)
     result = fs.load_dataframe(["test/resample1", "test/resample2"], freq="10min")
     compare = (
         pd.concat([df1, df2], join="outer", axis=1).resample("10min").ffill().ffill()
     )
-    assert result.equals(compare)
+    assert compare_df(result, compare)
     result = fs.load_dataframe(
         ["test/resample1", "test/resample2"],
         freq="10min",
@@ -414,7 +444,7 @@ def test_resampling(fs):
         (compare.index >= pd.Timestamp("2021-01-10"))
         & (compare.index <= pd.Timestamp("2021-01-12"))
     ]
-    assert result.equals(compare)
+    assert compare_df(result, compare)
     # Use dataframe to specify which features to load
     result = fs.load_dataframe(
         fs.list_features(regex=r"resample."),
@@ -422,7 +452,7 @@ def test_resampling(fs):
         from_date="2021-01-10",
         to_date="2021-01-12",
     )
-    assert result.equals(compare)
+    assert compare_df(result, compare)
     result = fs.load_dataframe(
         "test/resample1",
         from_date="2021-01-10",
@@ -432,57 +462,33 @@ def test_resampling(fs):
         (df1.index >= pd.Timestamp("2021-01-10"))
         & (df1.index <= pd.Timestamp("2021-01-12"))
     ]
-    assert result.equals(compare)
+    assert compare_df(result, compare)
 
-    # Dask tests
-    fs.mode = "dask"
-    result_dask = fs.load_dataframe(
-        ["test/resample1", "test/resample2"],
-    )
-    compare = pd.concat([df1, df2], join="outer", axis=1).ffill()
-    assert result_dask.compute().equals(compare)
-    result_dask = fs.load_dataframe(
-        ["test/resample1", "test/resample2"],
-        freq="2d",
-    )
-    compare = pd.concat([df1, df2], join="outer", axis=1).resample("2d").ffill().ffill()
-    assert result_dask.compute().equals(compare)
-    result_dask = fs.load_dataframe(
-        ["test/resample1", "test/resample2"],
-        freq="10min",
-    )
-    compare = (
-        pd.concat([df1, df2], join="outer", axis=1).resample("10min").ffill().ffill()
-    )
-    assert result_dask.compute().equals(compare)
-    result_dask = fs.load_dataframe(
-        ["test/resample1", "test/resample2"],
-        freq="10min",
-        from_date="2021-01-10",
-        to_date="2021-01-12",
-    )
-    compare = (
-        pd.concat([df1, df2], join="outer", axis=1).resample("10min").ffill().ffill()
-    )
-    compare = compare[
-        (compare.index >= pd.Timestamp("2021-01-10"))
-        & (compare.index <= pd.Timestamp("2021-01-12"))
-    ]
-    assert result_dask.compute().equals(compare)
-    result_dask = fs.load_dataframe(
-        "test/resample1",
-        from_date="2021-01-10",
-        to_date="2021-01-12",
-    )
-    compare = df1[
-        (df1.index >= pd.Timestamp("2021-01-10"))
-        & (df1.index <= pd.Timestamp("2021-01-12"))
-    ]
-    assert result_dask.compute().equals(compare)
+    # Non-contiguous resampling
+    dts = pd.date_range("2021-01-01", "2021-01-05")
+    df3 = pd.DataFrame(
+        {"time": dts, "test/resample3": np.random.randn(len(dts))}
+    ).set_index("time")
+    dts = pd.date_range("2021-01-10", "2021-02-15")
+    df4 = pd.DataFrame(
+        {"time": dts, "test/resample4": np.random.randn(len(dts))}
+    ).set_index("time")
+    fs.create_feature("test/resample3", description="df3")
+    fs.create_feature("test/resample4", description="df4")
+    fs.save_dataframe(df3)
+    fs.save_dataframe(df4)
 
-    fs.mode = "pandas"
+    compare = pd.concat([df3, df4], join="outer", axis=1).resample("1d").ffill().ffill()
+    compare = compare[compare.index >= pd.Timestamp("2021-01-14")]
+    result = fs.load_dataframe(
+        ["test/resample3", "test/resample4"], from_date="2021-01-14", freq="1d"
+    )
+    assert compare_df(result, compare)
+
     fs.delete_feature("test/resample1")
     fs.delete_feature("test/resample2")
+    fs.delete_feature("test/resample3")
+    fs.delete_feature("test/resample4")
 
 
 def test_serialized_features(fs):
@@ -509,7 +515,7 @@ def test_serialized_features(fs):
     # This should work
     fs.save_dataframe(df, "test/serialized")
     result = fs.load_dataframe("test/serialized")
-    assert result.equals(df.rename(columns={"value": "test/serialized"}))
+    assert compare_df(result, df.rename(columns={"value": "test/serialized"}))
 
     fs.delete_feature("test/non-serialized")
     fs.delete_feature("test/serialized")
@@ -525,7 +531,7 @@ def test_empty_features(fs):
     fs.create_feature("test/empty1")
 
     result = fs.load_dataframe(["test/empty1"])
-    assert result.empty
+    assert empty_df(result)
     result = fs.load_dataframe(
         ["test/empty1"], from_date="2021-01-01", to_date="2021-01-10", freq="1d"
     )
@@ -536,7 +542,7 @@ def test_empty_features(fs):
     result = fs.load_dataframe(
         ["test/empty1"], from_date="2020-01-01", to_date="2020-03-01"
     )
-    assert result.empty
+    assert empty_df(result)
 
     fs.delete_feature("test/empty1")
 
@@ -573,13 +579,13 @@ def test_time_travel(fs):
     fs.save_dataframe(df3)
 
     result = fs.load_dataframe("test/timetravel1")
-    assert result.equals(df1.drop(columns="created_time"))
+    assert compare_df(result, df1.drop(columns="created_time"))
     result = fs.load_dataframe("test/timetravel1", time_travel="-15min")
-    assert result.equals(df2.drop(columns="created_time"))
+    assert compare_df(result, df2.drop(columns="created_time"))
     result = fs.load_dataframe("test/timetravel1", time_travel="-60min")
-    assert result.equals(df3.drop(columns="created_time"))
+    assert compare_df(result, df3.drop(columns="created_time"))
     result = fs.load_dataframe("test/timetravel1", time_travel="-120min")
-    assert result.empty
+    assert empty_df(result)
 
     fs.delete_feature("test/timetravel1")
 
@@ -648,9 +654,12 @@ def test_transforms(fs):
     result = fs.load_dataframe(
         ["test/raw-feature", "test/squared-feature", "test/combined-feature"]
     )
-    assert result["test/squared-feature"].equals(result["test/raw-feature"] ** 2)
-    assert result["test/combined-feature"].equals(
-        result["test/raw-feature"] ** 2 + result["test/raw-feature"]
+    assert compare_series(
+        result["test/squared-feature"], result["test/raw-feature"] ** 2
+    )
+    assert compare_series(
+        result["test/combined-feature"],
+        result["test/raw-feature"] ** 2 + result["test/raw-feature"],
     )
 
     result = fs.last(
