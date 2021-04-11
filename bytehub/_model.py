@@ -1,14 +1,16 @@
 import sqlalchemy as sa
 from sqlalchemy import Table, Column, ForeignKey
-from sqlalchemy import Integer, String, Boolean, JSON, Enum
+from sqlalchemy import Integer, String, Boolean, JSON, Enum, DateTime
 from sqlalchemy.orm import relationship, validates
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
 from sqlalchemy.ext.hybrid import hybrid_property
+import datetime
 import re
 import copy
 import types
 from . import _utils as utils
 from . import _timeseries as ts
+from . import _storage as storage
 from . import _connection as conn
 
 
@@ -70,11 +72,20 @@ class FeatureStoreMixin(object):
         self.bump_version()
 
 
+class ByteHubVersion(Base):
+    __tablename__ = "bytehub_version"
+
+    id = Column(Integer, primary_key=True)
+    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+    version = Column(String(128), nullable=False)
+
+
 class Namespace(Base, FeatureStoreMixin):
     __tablename__ = "namespace"
 
     url = Column(String, nullable=False, unique=True)
     storage_options = Column(JSON, nullable=False, default={})
+    backend = Column(String, nullable=True, default="pandas")
 
     @hybrid_property
     def namespace(self):
@@ -88,15 +99,27 @@ class Namespace(Base, FeatureStoreMixin):
     def namespace(cls):
         return cls.name
 
+    def _backend(self):
+        # Check backend is available and get it
+        backend = "pandas" if not self.backend else self.backend.lower()
+        if self.backend in storage.available_backends:
+            return storage.available_backends[backend](
+                url=self.url, storage_options=self.storage_options
+            )
+        else:
+            raise RuntimeError(
+                f"{backend} storage backend is not available: make sure and dependencies are installed"
+            )
+
     def clean(self):
         # Check for unused data and remove it
-        feature_paths = ts.feature_paths(self.url, storage_options=self.storage_options)
+        store = self._backend()
         active_feature_names = [f.name for f in self.features]
-        feature_data = [f.split("/")[-1] for f in feature_paths]
+        feature_data = store.ls()
         for feature in feature_data:
             if feature not in active_feature_names:
                 # Redundant data... delete it
-                ts.delete(feature, self.url, storage_options=self.storage_options)
+                store.delete(feature)
 
 
 class Feature(Base, FeatureStoreMixin):
@@ -157,17 +180,11 @@ class Feature(Base, FeatureStoreMixin):
         return clone
 
     def save(self, df):
-        ts.save(
-            df,
-            self.name,
-            self.namespace_object.url,
-            self.namespace_object.storage_options,
-            partition=self.partition,
-            serialized=self.serialized,
-        )
+        store = self.namespace_object._backend()
+        store.save(self.name, df, partition=self.partition, serialized=self.serialized)
 
     def load_transform(
-        self, from_date, to_date, freq, time_travel, mode, last=False, callers=[]
+        self, from_date, to_date, freq, time_travel, last=False, callers=[]
     ):
         # Get the SQLAlchemy session for this feature
         session = sa.inspect(self).session
@@ -198,7 +215,6 @@ class Feature(Base, FeatureStoreMixin):
                 to_date=to_date,
                 freq=freq,
                 time_travel=time_travel,
-                mode=mode,
                 last=last,
                 callers=[*callers, self.full_name],
             )
@@ -208,7 +224,7 @@ class Feature(Base, FeatureStoreMixin):
         # Make sure columns are in the same order as args
         dfs = dfs[self.transform["args"]]
         # Apply transform function
-        transformed = ts.transform(dfs, func, mode)
+        transformed = ts.transform(dfs, func)
         return transformed
 
     def load(
@@ -217,7 +233,6 @@ class Feature(Base, FeatureStoreMixin):
         to_date=None,
         freq=None,
         time_travel=None,
-        mode="pandas",
         last=False,
         callers=[],
     ):
@@ -228,33 +243,28 @@ class Feature(Base, FeatureStoreMixin):
                 to_date=to_date,
                 freq=freq,
                 time_travel=time_travel,
-                mode=mode,
                 last=last,
                 callers=callers,
             )
-        # Get location
-        url = self.namespace_object.url
-        storage_options = self.namespace_object.storage_options
+        # Get storage
+        store = self.namespace_object._backend()
         # Restrict which partitions are loaded when getting last value
         if last:
-            from_date = ts.last_date(self.name, url, storage_options)
+            from_date = store.last(self.name)
             to_date = None
         # Load dataframe
-        return ts.load(
+        return store.load(
             self.name,
-            url,
-            storage_options,
-            from_date,
-            to_date,
-            freq,
-            time_travel,
-            mode,
-            self.serialized,
+            from_date=from_date,
+            to_date=to_date,
+            freq=freq,
+            time_travel=time_travel,
+            serialized=self.serialized,
         )
 
-    def last(self, mode="pandas"):
+    def last(self):
         # Fetch last feature value
-        df = self.load(mode=mode, last=True)
+        df = self.load(last=True)
         result = df.tail(1)
         if result.empty:
             return None
@@ -263,23 +273,15 @@ class Feature(Base, FeatureStoreMixin):
 
     def delete_data(self):
         # Deletes all of the data on this feature
-        ts.delete(
-            self.name, self.namespace_object.url, self.namespace_object.storage_options
-        )
+        store = self.namespace_object._backend()
+        store.delete(self.name)
 
     def import_data_from(self, other):
         # Copy data over from another feature
         if not isinstance(other, self.__class__):
             raise ValueError(f"Must clone from another {cls.__name__}")
         # Get location of other feature to copy from
-        url = other.namespace_object.url
-        storage_options = other.namespace_object.storage_options
+        store_from = other.namespace_object._backend()
+        store_to = self.namespace_object._backend()
         # Copy data to new location
-        ts.copy(
-            other.name,
-            url,
-            storage_options,
-            self.name,
-            self.namespace_object.url,
-            self.namespace_object.storage_options,
-        )
+        store_from.copy(other.name, self.name, store_to)

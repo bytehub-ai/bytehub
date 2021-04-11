@@ -22,4 +22,5 @@ jobs:
           CLOUDSTORE_AWS: ${{ secrets.CLOUDSTORE_AWS }}
           CLOUDSTORE_GCP: ${{ secrets.CLOUDSTORE_GCP }}
           BYTEHUB_TOKEN: ${{ secrets.BYTEHUB_TOKEN }}
+        if: github.ref == 'refs/heads/release'
         run: pytest 

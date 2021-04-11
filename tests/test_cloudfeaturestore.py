@@ -126,7 +126,7 @@ class TestCloudFeatureStore:
         prefix = urlparse(namespaces.iloc[0].url)
         prefix = prefix.netloc + prefix.path
 
-        dts = pd.date_range("2021-01-01", "2021-03-01")
+        dts = pd.date_range("2021-01-01", "2021-01-10")
         df1 = pd.DataFrame(
             {"time": dts, "value": np.random.randint(0, 100, size=len(dts))}
         ).set_index("time")
@@ -157,7 +157,7 @@ class TestCloudFeatureStore:
         print("Testing cloned features")
         fs = self.fs
 
-        dts = pd.date_range("2021-01-01", "2021-03-01")
+        dts = pd.date_range("2021-01-01", "2021-01-10")
         df1 = pd.DataFrame(
             {"time": dts, "value": np.random.randint(0, 100, size=len(dts))}
         ).set_index("time")
@@ -188,11 +188,11 @@ class TestCloudFeatureStore:
         print("Testing data load/save...")
         fs = self.fs
 
-        dts = pd.date_range("2021-01-01", "2021-03-01")
+        dts = pd.date_range("2021-01-01", "2021-01-10")
         df1 = pd.DataFrame({"time": dts, "value": np.random.randn(len(dts))}).set_index(
             "time"
         )
-        dts = pd.date_range("2021-01-01", "2021-02-01", freq="60min")
+        dts = pd.date_range("2021-01-01", "2021-01-10", freq="60min")
         df2 = pd.DataFrame(
             {"time": dts, "value": [{"x": np.random.randn()} for x in dts]}
         )
@@ -246,7 +246,7 @@ class TestCloudFeatureStore:
         print("Testing last feature values...")
         fs = self.fs
 
-        dts = pd.date_range("2021-01-01", "2021-03-01")
+        dts = pd.date_range("2021-01-01", "2021-01-10")
         df1 = pd.DataFrame(
             {
                 "time": dts,
@@ -282,7 +282,7 @@ class TestCloudFeatureStore:
         print("Testing feature transforms...")
         fs = self.fs
 
-        dts = pd.date_range("2021-01-01", "2021-03-01")
+        dts = pd.date_range("2021-01-01", "2021-01-10")
         df1 = pd.DataFrame(
             {
                 "time": dts,

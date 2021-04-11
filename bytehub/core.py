@@ -6,14 +6,9 @@ from sqlalchemy.sql import text
 from . import _connection as conn
 from ._base import BaseFeatureStore
 from . import _timeseries as ts
+from . import _model as model
+from . import _upgrade as upgrade
 from .exceptions import *
-
-
-try:
-    # Allow for a minimal install with no dask
-    from . import _model as model
-except ImportError:
-    pass
 
 
 class CoreFeatureStore(BaseFeatureStore):
@@ -31,25 +26,21 @@ class CoreFeatureStore(BaseFeatureStore):
     def __init__(
         self,
         connection_string="sqlite:///bytehub.db",
-        backend="pandas",
         connect_args={},
     ):
         """
         Args:
             connection_string (str): SQLAlchemy connection string for database
                 containing feature store metadata - defaults to local sqlite file.
-            backend (str, optional): either `"pandas"` (default) or `"dask"`, specifying the type
-                of dataframes returned by `load_dataframe`.
             connect_args (dict, optional): dictionary of [connection arguments](https://docs.sqlalchemy.org/en/14/core/engines.html#sqlalchemy.create_engine.params.connect_args)
                 to pass to SQLAlchemy.
         """
         self.engine, self.session_maker = conn.connect(
             connection_string, connect_args=connect_args
         )
-        if backend.lower() not in ["pandas", "dask"]:
-            raise FeatureStoreException("Backend must be either pandas or dask")
-        self.mode = backend.lower()
         model.Base.metadata.create_all(self.engine)
+        # Upgrade the database schema if required
+        upgrade.upgrade(self.engine)
 
     def _list(self, cls, namespace=None, name=None, regex=None, friendly=True):
         namespace, name = self.__class__._split_name(namespace, name)
@@ -138,7 +129,7 @@ class CoreFeatureStore(BaseFeatureStore):
     def create_namespace(self, name, **kwargs):
         self.__class__._validate_kwargs(
             kwargs,
-            valid=["description", "url", "storage_options", "meta"],
+            valid=["description", "url", "storage_options", "backend", "meta"],
             mandatory=["url"],
         )
         self._create(model.Namespace, name=name, payload=kwargs)
@@ -280,7 +271,6 @@ class CoreFeatureStore(BaseFeatureStore):
                     to_date=to_date,
                     freq=freq,
                     time_travel=time_travel,
-                    mode=self.mode,
                 )
                 dfs.append(df.rename(columns={"value": f"{namespace}/{name}"}))
         return ts.concat(dfs)
@@ -337,5 +327,5 @@ class CoreFeatureStore(BaseFeatureStore):
                         f"No feature named {name} exists in {namespace}"
                     )
                 # Load individual feature
-                result[f"{namespace}/{name}"] = feature.last(mode=self.mode)
+                result[f"{namespace}/{name}"] = feature.last()
         return result

@@ -6,6 +6,7 @@ import os
 from pandas.io import json
 from ._base import BaseFeatureStore
 from . import _timeseries as ts
+from . import _storage as storage
 from . import _utils as utils
 from .exceptions import *
 
@@ -33,21 +34,23 @@ class CloudFeatureStore(BaseFeatureStore):
     def __init__(
         self,
         connection_string="https://api.bytehub.ai",
-        backend="pandas",
-        enable_transforms=False,
+        enable_transforms=True,
     ):
         """
         Args:
             connection_string (str): URL of ByteHub Cloud, e.g. [https://api.bytehub.ai](https://api.bytehub.ai).
-            backend (str, optional): either `"pandas"` (default) or `"dask"`, specifying the type
-                of dataframes returned by `load_dataframe`.
             enable_transforms (bool, optional): whether to allow execution of pickled functions
                 stored in the feature store. Required for feature transforms, but should only be enabled
                 if you trust the feature store and the transforms that have been saved to it.
         """
-        if backend.lower() not in ["pandas", "dask"]:
-            raise FeatureStoreException("Backend must be either pandas or dask")
-        self.mode = backend.lower()
+        try:
+            # Check that s3fs is available
+            import s3fs
+        except ImportError:
+            raise RuntimeError(
+                "Cloud feature store requires s3fs be installed: use pip install bytehub[cloud]"
+            )
+        self.enable_transforms = enable_transforms
         self._endpoint = connection_string
         if "/v1" not in self._endpoint:
             # Add API version
@@ -170,6 +173,13 @@ class CloudFeatureStore(BaseFeatureStore):
             raise MissingFeatureException(f"{entity} not found: {kwargs}")
         return ls.iloc[0].to_dict()
 
+    def _backend(self, namespace):
+        ns = self._get("namespace", name=namespace)
+        store = storage.available_backends["pandas"](
+            url=ns["url"], storage_options=ns["storage_options"]
+        )
+        return store
+
     def list_namespaces(self, **kwargs):
         self.__class__._validate_kwargs(kwargs, ["name", "namespace", "regex"])
         url = self._endpoint + "namespace"
@@ -195,7 +205,7 @@ class CloudFeatureStore(BaseFeatureStore):
     def create_namespace(self, name, **kwargs):
         self.__class__._validate_kwargs(
             kwargs,
-            valid=["description", "url", "storage_options", "meta"],
+            valid=["description", "url", "storage_options", "meta", "backend"],
             mandatory=["url"],
         )
         url = self._endpoint + "namespace"
@@ -237,16 +247,15 @@ class CloudFeatureStore(BaseFeatureStore):
     def clean_namespace(self, name):
         # Get namespace
         self._refresh(name=name)
-        ns = self._get("namespace", name=name)
         # Check for unused data and remove it
-        feature_paths = ts.feature_paths(ns["url"], ns["storage_options"])
+        store = self._backend(name)
         active_feature_names = self.list_features(namespace=name)
         active_feature_names = active_feature_names["name"].tolist()
-        feature_data = [f.split("/")[-1] for f in feature_paths]
+        feature_data = store.ls()
         for feature in feature_data:
             if feature not in active_feature_names:
                 # Redundant data... delete it
-                ts.delete(feature, ns["url"], storage_options=ns["storage_options"])
+                store.delete(feature)
 
     def list_features(self, **kwargs):
         self.__class__._validate_kwargs(
@@ -313,18 +322,11 @@ class CloudFeatureStore(BaseFeatureStore):
         )
         # Copy data to new feature, if this raises exception will rollback
         if not payload.get("transform"):
-            # Get location of this feature to copy to
-            from_ns = self._get("namespace", name=from_namespace)
-            to_ns = self._get("namespace", name=to_namespace)
+            # Get storage backends for copy
+            store_from = self._backend(from_namespace)
+            store_to = self._backend(to_namespace)
             try:
-                ts.copy(
-                    from_name,
-                    from_ns["url"],
-                    from_ns["storage_options"],
-                    to_name,
-                    to_ns["url"],
-                    to_ns["storage_options"],
-                )
+                store_from.copy(from_name, to_name, store_to)
             except Exception as e:
                 # Rollback... delete the newly created feature
                 self.delete_feature(name=from_name, namespace=from_namespace)
@@ -343,8 +345,8 @@ class CloudFeatureStore(BaseFeatureStore):
         # Delete data
         if delete_data:
             namespace, name = self.__class__._split_name(namespace, name)
-            ns = self._get("namespace", name=namespace)
-            ts.delete(name, ns["url"], storage_options=ns["storage_options"])
+            store = self._backend(namespace)
+            store.delete(name)
 
     def update_feature(self, name, namespace=None, **kwargs):
         self.__class__._validate_kwargs(
@@ -399,7 +401,6 @@ class CloudFeatureStore(BaseFeatureStore):
         to_date,
         freq,
         time_travel,
-        mode,
         last=False,
         callers=[],
     ):
@@ -425,7 +426,6 @@ class CloudFeatureStore(BaseFeatureStore):
                 to_date,
                 freq,
                 time_travel,
-                mode,
                 last=last,
                 callers=[*callers, full_name],
             )
@@ -435,7 +435,7 @@ class CloudFeatureStore(BaseFeatureStore):
         # Make sure columns are in the same order as args
         dfs = dfs[feature["transform"]["args"]]
         # Apply transform function
-        transformed = ts.transform(dfs, func, mode)
+        transformed = ts.transform(dfs, func)
         return transformed
 
     def _load(
@@ -445,11 +445,14 @@ class CloudFeatureStore(BaseFeatureStore):
         to_date,
         freq,
         time_travel,
-        mode,
         last=False,
         callers=[],
     ):
         if feature["transform"]:
+            if not self.enable_transforms:
+                raise RemoteFeatureStoreException(
+                    "Transforms not enabled - if you trust this feature store then set enable_transforms=True when connecting"
+                )
             # Apply feature transform
             return self._load_transform(
                 feature,
@@ -457,28 +460,22 @@ class CloudFeatureStore(BaseFeatureStore):
                 to_date,
                 freq,
                 time_travel,
-                mode,
                 last,
                 callers,
             )
         else:
-            ns = self._get("namespace", name=feature["namespace"])
+            store = self._backend(feature["namespace"])
             # Change date range if getting last value
             if last:
-                from_date = ts.last_date(
-                    feature["name"], ns["url"], ns["storage_options"]
-                )
+                from_date = store.last(feature["name"])
                 to_date = None
-            return ts.load(
+            return store.load(
                 feature["name"],
-                ns["url"],
-                ns["storage_options"],
-                from_date,
-                to_date,
-                freq,
-                time_travel,
-                mode,
-                feature["serialized"],
+                from_date=from_date,
+                to_date=to_date,
+                freq=freq,
+                time_travel=time_travel,
+                serialized=feature["serialized"],
             )
 
     def load_dataframe(
@@ -494,7 +491,7 @@ class CloudFeatureStore(BaseFeatureStore):
         for f in self._unpack_list(features):
             namespace, name = f
             feature = self._get("feature", name=name, namespace=namespace)
-            df = self._load(feature, from_date, to_date, freq, time_travel, self.mode)
+            df = self._load(feature, from_date, to_date, freq, time_travel)
             dfs.append(df.rename(columns={"value": f"{namespace}/{name}"}))
         return ts.concat(dfs)
 
@@ -512,13 +509,11 @@ class CloudFeatureStore(BaseFeatureStore):
             feature = self._get("feature", namespace=namespace, name=name)
             # Save data for this feature
             namespace, name = self.__class__._split_name(namespace, name)
-            ns = self._get("namespace", name=namespace)
+            store = self._backend(namespace)
             # Save individual feature
-            ts.save(
-                df,
+            store.save(
                 name,
-                ns["url"],
-                ns["storage_options"],
+                df,
                 partition=feature["partition"],
                 serialized=feature["serialized"],
             )
@@ -546,7 +541,6 @@ class CloudFeatureStore(BaseFeatureStore):
                 to_date=None,
                 freq=None,
                 time_travel=None,
-                mode=self.mode,
                 last=True,
             )
             r = df.tail(1)
