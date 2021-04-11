@@ -3,5 +3,6 @@ pyarrow>=3.0
 dask[dataframe,delayed]>=2021
 cloudpickle>=1.3.0
 SQLAlchemy>=1.3
+alembic>=1.5
 requests>=2
 requests_oauthlib>=1.1

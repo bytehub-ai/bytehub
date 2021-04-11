@@ -6,14 +6,9 @@ from sqlalchemy.sql import text
 from . import _connection as conn
 from ._base import BaseFeatureStore
 from . import _timeseries as ts
+from . import _model as model
+from . import _upgrade as upgrade
 from .exceptions import *
-
-
-try:
-    # Allow for a minimal install with no dask
-    from . import _model as model
-except ImportError:
-    pass
 
 
 class CoreFeatureStore(BaseFeatureStore):
@@ -44,6 +39,8 @@ class CoreFeatureStore(BaseFeatureStore):
             connection_string, connect_args=connect_args
         )
         model.Base.metadata.create_all(self.engine)
+        # Upgrade the database schema if required
+        upgrade.upgrade(self.engine)
 
     def _list(self, cls, namespace=None, name=None, regex=None, friendly=True):
         namespace, name = self.__class__._split_name(namespace, name)

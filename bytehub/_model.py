@@ -1,9 +1,10 @@
 import sqlalchemy as sa
 from sqlalchemy import Table, Column, ForeignKey
-from sqlalchemy import Integer, String, Boolean, JSON, Enum
+from sqlalchemy import Integer, String, Boolean, JSON, Enum, DateTime
 from sqlalchemy.orm import relationship, validates
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
 from sqlalchemy.ext.hybrid import hybrid_property
+import datetime
 import re
 import copy
 import types
@@ -69,6 +70,14 @@ class FeatureStoreMixin(object):
                 # Update fields
                 setattr(self, key, value) if hasattr(self, key) else None
         self.bump_version()
+
+
+class ByteHubVersion(Base):
+    __tablename__ = "bytehub_version"
+
+    id = Column(Integer, primary_key=True)
+    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+    version = Column(String(128), nullable=False)
 
 
 class Namespace(Base, FeatureStoreMixin):
