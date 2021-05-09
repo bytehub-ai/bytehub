@@ -23,7 +23,7 @@ setup(
     install_requires=install_requires,
     extras_require={
         "dev": ["pytest", "black", "bump2version", "jupyterlab", "pre-commit", "pdoc3"],
-        "aws": ["s3fs==0.4"],
+        "aws": ["s3fs==0.4", "awswrangler>=2.7"],
         "gcp": ["gcsfs==0.8"],
         "azure": ["adlfs>=0.6"],
         "cloud": ["s3fs==0.4"],
