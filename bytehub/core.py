@@ -243,6 +243,47 @@ class CoreFeatureStore(BaseFeatureStore):
 
         return decorator
 
+    def create_task(self):
+        self.__class__._validate_kwargs(
+            kwargs,
+            valid=["description", "meta", "task"],
+            mandatory=[],
+        )
+        self._create(model.Task, namespace=namespace, name=name, payload=kwargs)
+        # TODO: create GitHub action to execute this task
+
+    def update_task(self):
+        self.__class__._validate_kwargs(
+            kwargs,
+            valid=["description", "meta", "task"],
+        )
+        self._update(model.Task, name=name, namespace=namespace, payload=kwargs)
+        # TODO: update GitHub action to execute this task
+
+    def delete_task(self):
+        self._delete(model.Task, namespace, name)
+        # TODO: remove GitHub action for this task
+
+    def task(self, name, namespace=None, schedule=None, container="bytehub/bytehub"):
+        def decorator(func):
+            # Create or update task
+            task = {"function": func}
+            meta = {"schedule": schedule, "container": container}
+            payload = {"transform": task, "description": func.__doc__, "meta": meta}
+            if self._exists(model.Task, namespace=namespace, name=name):
+                # Already exists, update it
+                self.update_task(name, namespace=namespace, **payload)
+            else:
+                # Create a new task
+                self.create_task(name, namespace=namespace, **payload)
+            # Call the task
+            def wrapped_func(*args, **kwargs):
+                return func(*args, **kwargs)
+
+            return wrapped_func
+
+        return decorator
+
     def load_dataframe(
         self,
         features,

@@ -285,3 +285,36 @@ class Feature(Base, FeatureStoreMixin):
         store_to = self.namespace_object._backend()
         # Copy data to new location
         store_from.copy(other.name, self.name, store_to)
+
+
+class Task(Base, FeatureStoreMixin):
+    __tablename__ = "task"
+
+    namespace = Column(String(128), ForeignKey("namespace.name"), primary_key=True)
+    namespace_object = relationship("Namespace", backref="tasks")
+
+    task = Column(JSON, nullable=True)
+
+    @hybrid_property
+    def full_name(self):
+        return f"{self.namespace}/{self.name}"
+
+    @validates("task")
+    def validate_task(self, key, value):
+        if not value:
+            return value
+        if isinstance(value.get("function"), str):
+            # Function already serialized, no conversion required
+            func = value.get("function")
+        elif isinstance(value.get("function"), types.FunctionType):
+            func = utils.serialize(value["function"])
+        else:
+            raise ValueError(
+                "Task must be a Python function, accepting a FeatureStore input"
+            )
+        assert "function" in value.keys(), "Task must have a function defined"
+        # Convert function to base64/cloudpickle format
+        return {
+            "format": "cloudpickle",
+            "function": func,
+        }

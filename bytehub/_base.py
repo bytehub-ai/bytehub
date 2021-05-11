@@ -258,3 +258,18 @@ class BaseFeatureStore(ABC):
     def delete_task(self):
         """Delete a task."""
         raise NotImplementedError()
+
+    def task(self, name, namespace=None, schedule=None, container="bytehub/bytehub"):
+        """Decorator for creating/updating tasks.
+        Use this on a function that accepts a FeatureStore object as input. The function
+        code can then carry out a task, usually fetching some data and inserting it into
+        the FeatureStore.
+
+        Args:
+            name (str): name of task.
+            namespace (str, optional): namespace, if not included in task name.
+            schedule (str, optional): cron-style schedule on which this task will run.
+            container (str, optional): container used for running this task, which must
+                at a minimum contain python3 with ByteHub installed.
+        """
+        raise NotImplementedError()

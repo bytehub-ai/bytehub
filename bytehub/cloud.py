@@ -394,6 +394,18 @@ class CloudFeatureStore(BaseFeatureStore):
 
         return decorator
 
+    def create_task(self):
+        raise NotImplementedError()
+
+    def update_task(self):
+        raise NotImplementedError()
+
+    def delete_task(self):
+        raise NotImplementedError()
+
+    def task(self, name, namespace=None, schedule=None, container="bytehub/bytehub"):
+        raise NotImplementedError()
+
     def _load_transform(
         self,
         feature,
