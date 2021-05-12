@@ -1,5 +1,11 @@
 from abc import ABC
 import pandas as pd
+import os
+import git
+from pathlib import Path
+from . import _utils as utils
+from cron_validator import CronValidator
+import warnings
 
 
 class BaseFeatureStore(ABC):
@@ -56,6 +62,55 @@ class BaseFeatureStore(ABC):
         else:
             raise ValueError(
                 "Must supply a string, dataframe or list specifying namespace/name"
+            )
+
+    @classmethod
+    def _git_root(path=None):
+        if not path:
+            path = os.getcwd()
+        try:
+            git_path = git.Repo(path, search_parent_directories=True).git_dir
+            return git_path
+        except git.exc.InvalidGitRepositoryError:
+            return None
+
+    def _git_schedule(self, name, namespace, schedule, container):
+        git_path = self._git_root()
+        if not git_path:
+            warnings.warn("Not a Git repo, so no GitHub action created for this task")
+            return
+        github_path = git_path.replace(".git", ".github")
+        github_path = Path(github_path, "bytehub", namespace, f"{name}.yml")
+        if not CronValidator.parse(schedule):
+            raise ValueError(f"Invalid cron expression for schedule: {schedule}")
+        # Create GitHub action YAML file
+        try:
+            rendered_template = utils.load_template(
+                "github.yml",
+                schedule=schedule,
+                container=container,
+                name=f"{namespace}/{name}",
+            )
+            directory = os.path.dirname(github_path)
+            if not os.path.exists(directory):
+                os.makedirs(directory)
+            with open(github_path, "w") as f:
+                f.write(rendered_template)
+        except Exception as e:
+            raise RuntimeError(f"Failed to write GitHub action file: {e}")
+
+    def _git_unschedule(self, name, namespace):
+        git_path = self._git_root()
+        if not git_path:
+            return
+        github_path = git_path.replace(".git", ".github")
+        github_path = Path(github_path, "bytehub", namespace, f"{name}.yml")
+        # Remove GitHub action
+        try:
+            os.remove(github_path)
+        except FileNotFoundError:
+            warnings.warn(
+                f"GitHub action file not found for {namespace}/{name}, so nothing removed"
             )
 
     def __init__(self, connection_string="sqlite:///bytehub.db", backend="pandas"):

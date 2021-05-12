@@ -250,7 +250,11 @@ class CoreFeatureStore(BaseFeatureStore):
             mandatory=[],
         )
         self._create(model.Task, namespace=namespace, name=name, payload=kwargs)
-        # TODO: create GitHub action to execute this task
+        # Create GitHub action to execute this task
+        namespace, name = self._split_name(namespace=namespace, name=name)
+        schedule = kwargs.get("meta", {}).get("schedule", "")
+        container = kwargs.get("meta", {}).get("container", "bytehub/bytehub")
+        self._git_schedule(name, namespace, schedule, container)
 
     def update_task(self):
         self.__class__._validate_kwargs(
@@ -258,11 +262,19 @@ class CoreFeatureStore(BaseFeatureStore):
             valid=["description", "meta", "task"],
         )
         self._update(model.Task, name=name, namespace=namespace, payload=kwargs)
-        # TODO: update GitHub action to execute this task
+        # Update GitHub action to execute this task
+        namespace, name = self._split_name(namespace=namespace, name=name)
+        task = self._list(model.Task, namespace=namespace, name=name)
+        meta = task.iloc[0].to_dict()["meta"]
+        schedule = meta.get("schedule", "")
+        container = meta.get("container", "bytehub/bytehub")
+        self._git_schedule(name, namespace, schedule, container)
 
     def delete_task(self):
         self._delete(model.Task, namespace, name)
-        # TODO: remove GitHub action for this task
+        # Remove GitHub action for this task
+        namespace, name = self._split_name(namespace=namespace, name=name)
+        self._git_unschedule(name, namespace)
 
     def task(self, name, namespace=None, schedule=None, container="bytehub/bytehub"):
         def decorator(func):

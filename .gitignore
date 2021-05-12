@@ -8,3 +8,4 @@ build/*
 .ipynb_checkpoints/*
 *.egg-info
 .vscode/*
+.github/bytehub/*

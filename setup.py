@@ -28,4 +28,7 @@ setup(
         "azure": ["adlfs>=0.6"],
         "cloud": ["s3fs==0.4"],
     },
+    package_data={
+        "bytehub": ["templates/*"],
+    },
 )

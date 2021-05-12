@@ -1,0 +1,14 @@
+name: {{ name }}
+on:
+  schedule:
+    - cron: '{{ schedule }}'
+jobs:
+  tasks:
+    runs-on: {{ container }}
+    steps:
+      - uses: actions/checkout@v2
+      - name: ByteHub Task
+        env:
+          BYTEHUB_CONNECTION: ${{ secrets.BYTEHUB_CONNECTION }}
+          BYTEHUB_TOKEN: ${{ secrets.BYTEHUB_TOKEN }}
+        run: bytehub run {{ name }}
