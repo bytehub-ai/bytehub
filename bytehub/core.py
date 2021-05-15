@@ -243,6 +243,14 @@ class CoreFeatureStore(BaseFeatureStore):
 
         return decorator
 
+    def list_tasks(self, **kwargs):
+        self.__class__._validate_kwargs(kwargs, ["name", "namespace", "regex"])
+        return self._list(
+            model.Task,
+            name=kwargs.get("name", kwargs.get("namespace")),
+            regex=kwargs.get("regex"),
+        )
+
     def create_task(self):
         self.__class__._validate_kwargs(
             kwargs,
@@ -295,6 +303,12 @@ class CoreFeatureStore(BaseFeatureStore):
             return wrapped_func
 
         return decorator
+
+    def run_task(self, name, namespace=None):
+        if not self._exists(model.Task, namespace=namespace, name=name):
+            raise MissingTaskException(f"No task found matching {namespace}/{name}")
+        # TODO: Load the code and run it
+        pass
 
     def load_dataframe(
         self,

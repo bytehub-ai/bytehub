@@ -25,12 +25,13 @@ or simply use the following to access ByteHub's cloud service:
 See [https://docs.bytehub.ai](https://docs.bytehub.ai) for examples and tutorials.
 
 """
+import os
 from .core import CoreFeatureStore
 from .cloud import CloudFeatureStore
 from ._version import __version__
 
 
-def FeatureStore(connection_string="sqlite:///bytehub.db", **kwargs):
+def FeatureStore(connection_string=None, **kwargs):
     """Factory method to create Feature Store objects.
 
     Args:
@@ -42,6 +43,18 @@ def FeatureStore(connection_string="sqlite:///bytehub.db", **kwargs):
     Returns:
         Union[CoreFeatureStore, CloudFeatureStore]: Feature Store object.
     """
+    if not connection_string:
+        # Check environment variables to see what connection is needed
+        if "BYTEHUB_TOKEN" in os.environ:
+            # Cloud feature store
+            connection_string = "https://api.bytehub.ai"
+        elif "BYTEHUB_CONNECTION" in os.environ:
+            # Direct connection
+            connection_string = os.environ["BYTEHUB_CONNECTION"]
+        else:
+            # Direct connection, local SQLite DB
+            connection_string = "sqlite:///bytehub.db"
+
     if connection_string.startswith("http"):
         # Connect to cloud-hosted feature store
         return CloudFeatureStore(connection_string=connection_string, **kwargs)

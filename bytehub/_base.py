@@ -302,6 +302,21 @@ class BaseFeatureStore(ABC):
         """
         raise NotImplementedError()
 
+    def list_tasks(self, **kwargs):
+        """List namespaces in the feature store.
+
+        Search by name or regex query.
+
+        Args:
+            name (str, optional): name of namespace to filter by.
+            namespace (str, optional): same as name.
+            regex (str, optional): regex filter on name.
+
+        Returns:
+            pd.DataFrame: DataFrame of namespaces and metadata.
+        """
+        raise NotImplementedError()
+
     def create_task(self):
         """Create a scheduled task to update the feature store."""
         raise NotImplementedError()
@@ -326,5 +341,14 @@ class BaseFeatureStore(ABC):
             schedule (str, optional): cron-style schedule on which this task will run.
             container (str, optional): container used for running this task, which must
                 at a minimum contain python3 with ByteHub installed.
+        """
+        raise NotImplementedError()
+
+    def run_task(self, name, namespace=None):
+        """Run a task.
+
+        Args:
+            name (str): name of task.
+            namespace (str, optional): namespace, if not included in task name.
         """
         raise NotImplementedError()

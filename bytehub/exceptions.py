@@ -19,3 +19,9 @@ class MissingFeatureException(Exception):
     """The requested feature/namespace does not exist."""
 
     pass
+
+
+class MissingTaskException(Exception):
+    """The requested task does not exist."""
+
+    pass
