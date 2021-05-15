@@ -9,3 +9,4 @@ requests_oauthlib>=1.1
 gitpython>=3.1
 Jinja2>=2.11
 cron-validator>=1.0
+click>=7.0

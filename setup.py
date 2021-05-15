@@ -31,4 +31,9 @@ setup(
     package_data={
         "bytehub": ["templates/*"],
     },
+    entry_points={
+        "console_scripts": [
+            "bytehub = bytehub.cli.bytehub:cli",
+        ],
+    },
 )
