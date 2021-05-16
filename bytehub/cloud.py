@@ -149,6 +149,10 @@ class CloudFeatureStore(BaseFeatureStore):
             ls = self.list_features(
                 namespace=kwargs.get("namespace"), name=kwargs.get("name")
             )
+        elif entity.lower() == "task":
+            ls = self.list_tasks(
+                namespace=kwargs.get("namespace"), name=kwargs.get("name")
+            )
         elif entity.lower() == "namespace":
             ls = self.list_namespaces(name=kwargs.get("name", kwargs.get("namespace")))
         else:
@@ -394,17 +398,82 @@ class CloudFeatureStore(BaseFeatureStore):
 
         return decorator
 
-    def create_task(self):
-        raise NotImplementedError()
+    def list_tasks(self, **kwargs):
+        self.__class__._validate_kwargs(kwargs, ["name", "namespace", "regex"])
+        return self._list(
+            model.Task,
+            name=kwargs.get("name", kwargs.get("namespace")),
+            regex=kwargs.get("regex"),
+        )
 
-    def update_task(self):
-        raise NotImplementedError()
+    def create_task(self, name, namespace=None, **kwargs):
+        self.__class__._validate_kwargs(
+            kwargs,
+            valid=["description", "meta", "task"],
+            mandatory=[],
+        )
+        self._endpoint + "task"
+        body = {"name": name, "namespace": namespace, **kwargs}
+        response = requests.post(
+            url, data=json.dumps(body), headers=self._api_headers()
+        )
+        self._check_response(response)
 
-    def delete_task(self):
-        raise NotImplementedError()
+    def update_task(self, name, namespace=None, **kwargs):
+        self.__class__._validate_kwargs(
+            kwargs,
+            valid=["description", "meta", "task"],
+        )
+        url = self._endpoint + "task"
+        body = {"name": name, "namespace": namespace, **kwargs}
+        response = requests.patch(
+            url, data=json.dumps(body), headers=self._api_headers()
+        )
+        self._check_response(response)
+
+    def delete_task(self, name, namespace=None):
+        url = self._endpoint + "task"
+        response = requests.delete(
+            url,
+            json={"name": name, "namespace": namespace},
+            headers=self._api_headers(),
+        )
+        self._check_response(response)
 
     def task(self, name, namespace=None, schedule=None, container="bytehub/bytehub"):
-        raise NotImplementedError()
+        def decorator(func):
+            # Create or update task
+            task = {"function": func}
+            meta = {"schedule": schedule, "container": container}
+            payload = {"transform": task, "description": func.__doc__, "meta": meta}
+            if self._exists("feature", namespace=namespace, name=name):
+                # Already exists, update it
+                self.update_task(name, namespace=namespace, **payload)
+            else:
+                # Create a new task
+                self.create_task(name, namespace=namespace, **payload)
+            # Call the task
+            def wrapped_func(*args, **kwargs):
+                return func(*args, **kwargs)
+
+            return wrapped_func
+
+        return decorator
+
+    def run_task(self, name, namespace=None):
+        if not self.enable_transforms:
+            raise RemoteFeatureStoreException(
+                "Transforms not enabled - if you trust this feature store then set enable_transforms=True when connecting"
+            )
+        namespace, name = self._split_name(namespace=namespace, name=name)
+        if not self._exists(model.Task, namespace=namespace, name=name):
+            raise MissingTaskException(f"No task found matching {namespace}/{name}")
+        # Load the code
+        task = self.list_tasks(namespace=namespace, name=name)
+        task = task.iloc[0].to_dict()
+        func = utils.deserialize(self.transform["function"])
+        # Execute the function
+        func(self)
 
     def _load_transform(
         self,

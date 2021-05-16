@@ -303,7 +303,7 @@ class BaseFeatureStore(ABC):
         raise NotImplementedError()
 
     def list_tasks(self, **kwargs):
-        """List namespaces in the feature store.
+        """List tasks in the feature store.
 
         Search by name or regex query.
 
@@ -313,20 +313,44 @@ class BaseFeatureStore(ABC):
             regex (str, optional): regex filter on name.
 
         Returns:
-            pd.DataFrame: DataFrame of namespaces and metadata.
+            pd.DataFrame: DataFrame of tasks and metadata.
         """
         raise NotImplementedError()
 
-    def create_task(self):
-        """Create a scheduled task to update the feature store."""
+    def create_task(self, name, namespace=None, **kwargs):
+        """Create a scheduled task to update the feature store.
+
+        Args:
+            name (str): name of the task
+            namespace (str, optional): namespace which should hold this task.
+            description (str, optional): description for this task.
+            task (str, optional): pickled function code for the task.
+            meta (dict, optional): key/value pairs of metadata. Should contain:
+                "schedule": a cron expression indicating when task should execute; and
+                "container": a Docker image in which the task should run.
+        """
         raise NotImplementedError()
 
-    def update_task(self):
-        """Update a task."""
+    def update_task(self, name, namespace=None, **kwargs):
+        """Update a task.
+
+        Args:
+            name (str): task to update.
+            namespace (str, optional): namespace, if not included in task name.
+            description (str, optional): updated description.
+            task (str, optional): pickled function code for the task.
+            meta (dict, optional): updated key/value pairs of metadata.
+                To remove metadata, update using `{"key_to_remove": None}`.
+        """
         raise NotImplementedError()
 
-    def delete_task(self):
-        """Delete a task."""
+    def delete_task(self, name, namespace=None):
+        """Delete a task.
+
+        Args:
+            name (str): name of task to delete.
+            namespace (str, optional): namespace, if not included in task name.
+        """
         raise NotImplementedError()
 
     def task(self, name, namespace=None, schedule=None, container="bytehub/bytehub"):

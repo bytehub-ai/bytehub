@@ -8,6 +8,7 @@ from ._base import BaseFeatureStore
 from . import _timeseries as ts
 from . import _model as model
 from . import _upgrade as upgrade
+from . import _utils as utils
 from .exceptions import *
 
 
@@ -251,7 +252,7 @@ class CoreFeatureStore(BaseFeatureStore):
             regex=kwargs.get("regex"),
         )
 
-    def create_task(self):
+    def create_task(self, name, namespace=None, **kwargs):
         self.__class__._validate_kwargs(
             kwargs,
             valid=["description", "meta", "task"],
@@ -264,7 +265,7 @@ class CoreFeatureStore(BaseFeatureStore):
         container = kwargs.get("meta", {}).get("container", "bytehub/bytehub")
         self._git_schedule(name, namespace, schedule, container)
 
-    def update_task(self):
+    def update_task(self, name, namespace=None, **kwargs):
         self.__class__._validate_kwargs(
             kwargs,
             valid=["description", "meta", "task"],
@@ -278,7 +279,7 @@ class CoreFeatureStore(BaseFeatureStore):
         container = meta.get("container", "bytehub/bytehub")
         self._git_schedule(name, namespace, schedule, container)
 
-    def delete_task(self):
+    def delete_task(self, name, namespace=None):
         self._delete(model.Task, namespace, name)
         # Remove GitHub action for this task
         namespace, name = self._split_name(namespace=namespace, name=name)
@@ -305,10 +306,15 @@ class CoreFeatureStore(BaseFeatureStore):
         return decorator
 
     def run_task(self, name, namespace=None):
+        namespace, name = self._split_name(namespace=namespace, name=name)
         if not self._exists(model.Task, namespace=namespace, name=name):
             raise MissingTaskException(f"No task found matching {namespace}/{name}")
-        # TODO: Load the code and run it
-        pass
+        # Load the code
+        task = self._list(model.Task, namespace=namespace, name=name)
+        task = task.iloc[0].to_dict()
+        func = utils.deserialize(self.transform["function"])
+        # Execute the function
+        func(self)
 
     def load_dataframe(
         self,
