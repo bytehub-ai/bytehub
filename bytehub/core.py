@@ -262,7 +262,7 @@ class CoreFeatureStore(BaseFeatureStore):
         # Create GitHub action to execute this task
         namespace, name = self._split_name(namespace=namespace, name=name)
         schedule = kwargs.get("meta", {}).get("schedule", "")
-        container = kwargs.get("meta", {}).get("container", "bytehub/bytehub")
+        container = kwargs.get("meta", {}).get("container", "bytehubai/bytehub")
         self._git_schedule(name, namespace, schedule, container)
 
     def update_task(self, name, namespace=None, **kwargs):
@@ -276,7 +276,7 @@ class CoreFeatureStore(BaseFeatureStore):
         task = self._list(model.Task, namespace=namespace, name=name)
         meta = task.iloc[0].to_dict()["meta"]
         schedule = meta.get("schedule", "")
-        container = meta.get("container", "bytehub/bytehub")
+        container = meta.get("container", "bytehubai/bytehub")
         self._git_schedule(name, namespace, schedule, container)
 
     def delete_task(self, name, namespace=None):
@@ -285,7 +285,7 @@ class CoreFeatureStore(BaseFeatureStore):
         namespace, name = self._split_name(namespace=namespace, name=name)
         self._git_unschedule(name, namespace)
 
-    def task(self, name, namespace=None, schedule=None, container="bytehub/bytehub"):
+    def task(self, name, namespace=None, schedule=None, container="bytehubai/bytehub"):
         def decorator(func):
             # Create or update task
             task = {"function": func}

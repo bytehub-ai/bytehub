@@ -440,7 +440,7 @@ class CloudFeatureStore(BaseFeatureStore):
         )
         self._check_response(response)
 
-    def task(self, name, namespace=None, schedule=None, container="bytehub/bytehub"):
+    def task(self, name, namespace=None, schedule=None, container="bytehubai/bytehub"):
         def decorator(func):
             # Create or update task
             task = {"function": func}
